@@ -1,0 +1,21 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 应用格子 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,34h20v20h-20zM58,34h20v20h-20zM30,62h20v20h-20z" />
+    <!-- 放大镜 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M66,58m-14,0a14,14 0,1 0,28 0a14,14 0,1 0,-28 0"
+        android:strokeWidth="7"
+        android:strokeColor="#FFFFFF" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="8"
+        android:strokeLineCap="round"
+        android:pathData="M76,68L90,82" />
+</vector>

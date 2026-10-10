@@ -1,0 +1,6 @@
+tools/manual-build/build-work/
+*.log
+.gradle/
+build/
+local.properties
+*.idsig

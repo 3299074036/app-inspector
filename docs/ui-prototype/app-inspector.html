@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light dark" />
+  <link rel="icon" href="data:," />
+  <title>App Inspector 设计</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      color-scheme:light dark;
+      --bg:#f2f5f4;--surface:#ffffff;--surface-2:#e8efed;--surface-3:#dce7e4;
+      --text:#10201c;--muted:#5a6b66;--line:#d7e0dd;--accent:#007c6f;--accent-2:#005e55;
+      --accent-soft:#d9f1ec;--warn:#9a5b00;--warn-soft:#fff0d7;--danger:#ae2e24;--danger-soft:#ffded9;
+      --shadow:0 16px 50px rgba(20,48,41,.12);--veil:rgba(9,24,20,.48);
+      --font:"Noto Sans SC","IBM Plex Sans",sans-serif;
+    }
+    @media(prefers-color-scheme:dark){:root{
+      --bg:#101714;--surface:#17211e;--surface-2:#202d29;--surface-3:#293934;
+      --text:#eff7f4;--muted:#a8bbb5;--line:#34453f;--accent:#58d6c2;--accent-2:#8debdc;
+      --accent-soft:#123c35;--warn:#ffc567;--warn-soft:#4a3417;--danger:#ff938a;--danger-soft:#4c2524;
+      --shadow:0 18px 60px rgba(0,0,0,.38);--veil:rgba(0,0,0,.68);
+    }}
+    *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:var(--font)}
+    button,input{font:inherit}button{color:inherit}.icon-btn,.seg button,.chip,.row,.action-btn,.primary,.secondary,.menu button,.choice,.close,.roadmap-btn{cursor:pointer}
+    button:focus-visible,input:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 32%,transparent);outline-offset:2px}
+    .app{max-width:1280px;margin:auto;min-height:100vh;display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:20px;padding:20px}
+    .phone{min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:28px;overflow:hidden;box-shadow:var(--shadow);display:flex;flex-direction:column;min-height:calc(100vh - 40px)}
+    .toolbar{height:72px;display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:0 18px;border-bottom:1px solid var(--line)}
+    .title-group{min-width:0}.title-group h1{font-size:22px;line-height:1.2;margin:0;font-weight:700}.count{font:500 12px/1.4 "IBM Plex Sans",sans-serif;color:var(--muted);margin-top:5px}
+    .tools{display:flex;gap:4px;position:relative}.icon-btn{width:44px;height:44px;border:0;background:transparent;border-radius:50%;display:grid;place-items:center}.icon-btn:hover{background:var(--surface-2)}
+    svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.dots svg{fill:currentColor;stroke:none}
+    .menu{position:absolute;right:0;top:50px;z-index:12;background:var(--surface);width:222px;border:1px solid var(--line);box-shadow:var(--shadow);border-radius:16px;padding:6px;display:none}.menu.open{display:block}.menu button{width:100%;border:0;background:none;padding:12px 14px;border-radius:10px;text-align:left;display:flex;align-items:center;justify-content:space-between}.menu button:hover{background:var(--surface-2)}.menu .active{color:var(--accent);font-weight:600}.menu small{color:var(--muted)}
+    .controls{padding:14px 16px 12px;border-bottom:1px solid var(--line);background:var(--surface)}
+    .search{height:46px;border:1px solid var(--line);background:var(--bg);border-radius:15px;display:flex;align-items:center;gap:10px;padding:0 14px}.search svg{color:var(--muted)}.search input{border:0;outline:0;background:transparent;color:var(--text);min-width:0;width:100%;font-size:15px}.search input::placeholder{color:var(--muted)}
+    .control-row{display:flex;align-items:center;gap:8px;margin-top:11px;overflow:hidden}.seg{display:flex;background:var(--surface-2);border-radius:12px;padding:3px;min-width:0}.seg button{border:0;background:transparent;border-radius:9px;padding:8px 13px;font-size:13px;white-space:nowrap;color:var(--muted)}.seg button.active{background:var(--surface);box-shadow:0 2px 8px rgba(25,52,45,.1);color:var(--text);font-weight:600}.sort-open{margin-left:auto;display:flex;align-items:center;gap:6px;border:0;background:none;color:var(--accent);font-size:13px;padding:8px 6px;white-space:nowrap}.sort-open svg{width:17px;height:17px}
+    .selection-bar{display:none;align-items:center;gap:8px;padding:9px 16px;background:var(--accent-soft);border-bottom:1px solid var(--line)}.selection-bar.show{display:flex}.selection-bar strong{font-size:14px}.selection-bar button{border:0;background:none;color:var(--accent);font-weight:600;margin-left:auto}
+    .list{padding:4px 0 84px;overflow:auto;flex:1}.group-label{padding:14px 20px 7px;color:var(--muted);font-size:12px;font-weight:600}.row{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:13px;align-items:center;padding:13px 18px;border:0;background:transparent;width:100%;text-align:left}.row:hover{background:var(--surface-2)}
+    .app-icon{width:52px;height:52px;border-radius:13px;display:grid;place-items:center;color:white;font:700 19px/1 "IBM Plex Sans",sans-serif;box-shadow:inset 0 0 0 1px rgba(255,255,255,.22)}.i1{background:#2c6cc9}.i2{background:#dc5c31}.i3{background:#169259}.i4{background:#db9a00}.i5{background:#5962a5}.i6{background:#64756f}.i7{background:#1e7e9a}.i8{background:#b93e59}
+    .app-copy{min-width:0}.name-line{display:flex;align-items:center;gap:7px;min-width:0}.name{font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.badge{font-size:10px;line-height:1;padding:4px 6px;border-radius:20px;background:var(--surface-3);color:var(--muted);white-space:nowrap}.badge.disabled{background:var(--warn-soft);color:var(--warn)}.badge.removed{background:var(--danger-soft);color:var(--danger)}.package,.meta{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.package{font:500 12px/1.5 "IBM Plex Sans",sans-serif;color:var(--muted);margin-top:3px}.meta{font:400 11px/1.5 "IBM Plex Sans",sans-serif;color:var(--muted)}
+    .pick{width:24px;height:24px;border:2px solid var(--line);border-radius:50%;display:grid;place-items:center}.row.selected .pick{border-color:var(--accent);background:var(--accent)}.row.selected .pick:after{content:"";width:9px;height:5px;border-left:2px solid white;border-bottom:2px solid white;transform:rotate(-45deg) translate(1px,-1px)}
+    .fabbar{position:absolute;bottom:20px;right:20px;display:flex;gap:10px}.screen{position:relative;display:flex;flex:1;min-height:0}.action-btn{height:48px;padding:0 17px;border:0;border-radius:16px;background:var(--accent);color:#fff;box-shadow:0 8px 25px rgba(0,124,111,.24);display:flex;align-items:center;gap:8px;font-weight:600}.action-btn.secondary-action{width:48px;padding:0;justify-content:center;background:var(--surface);color:var(--accent);border:1px solid var(--line);box-shadow:0 7px 22px rgba(20,48,41,.12)}
+    .panel{background:var(--surface);border:1px solid var(--line);border-radius:24px;padding:22px;align-self:start;position:sticky;top:20px}.stage{display:inline-flex;align-items:center;gap:8px;color:var(--accent);font-size:12px;font-weight:700}.stage:before{content:"";width:8px;height:8px;border-radius:50%;background:var(--accent)}.panel h2{font-size:25px;line-height:1.25;margin:14px 0 8px}.panel>p{margin:0;color:var(--muted);font-size:14px;line-height:1.7}.roadmap{margin:22px 0 0;padding:0;list-style:none}.roadmap li{display:grid;grid-template-columns:30px 1fr;gap:10px;padding:12px 0;border-top:1px solid var(--line)}.num{font:600 12px/24px "IBM Plex Sans",sans-serif;width:24px;height:24px;text-align:center;border-radius:50%;background:var(--surface-2);color:var(--muted)}.roadmap strong{display:block;font-size:14px}.roadmap span{display:block;color:var(--muted);font-size:12px;line-height:1.55;margin-top:3px}.tech{margin-top:18px;padding:14px;background:var(--surface-2);border-radius:14px;font:500 12px/1.7 "IBM Plex Sans",var(--font)}.roadmap-btn{width:100%;height:44px;border:1px solid var(--line);background:transparent;border-radius:12px;color:var(--accent);font-weight:600;margin-top:16px}
+    .backdrop{position:fixed;inset:0;background:var(--veil);display:none;z-index:30;padding:20px;align-items:center;justify-content:center}.backdrop.show{display:flex}.sheet{width:min(520px,100%);max-height:min(780px,calc(100vh - 32px));overflow:auto;background:var(--surface);border-radius:24px;box-shadow:var(--shadow)}.sheet-head{display:flex;align-items:center;justify-content:space-between;padding:22px 22px 14px;position:sticky;top:0;background:var(--surface);z-index:1}.sheet-head h3{margin:0;font-size:20px}.close{width:36px;height:36px;border-radius:50%;border:0;background:var(--surface-2);font-size:22px}.sheet-body{padding:0 22px 22px}.section-title{font-size:12px;color:var(--muted);font-weight:600;margin:13px 0 8px}.choices{border:1px solid var(--line);border-radius:15px;overflow:hidden}.choice{display:flex;align-items:center;gap:12px;padding:13px 14px;border:0;border-bottom:1px solid var(--line);background:transparent;width:100%;text-align:left}.choice:last-child{border-bottom:0}.radio{width:20px;height:20px;border:2px solid var(--line);border-radius:50%}.choice.active .radio{border:6px solid var(--accent)}.check{width:20px;height:20px;border:2px solid var(--line);border-radius:6px}.choice.active .check{background:var(--accent);border-color:var(--accent);position:relative}.choice.active .check:after{content:"";position:absolute;left:4px;top:1px;width:7px;height:11px;border:solid white;border-width:0 2px 2px 0;transform:rotate(45deg)}.sheet-actions{display:flex;gap:10px;margin-top:18px}.primary,.secondary{height:46px;border-radius:13px;padding:0 18px;font-weight:600;flex:1}.primary{border:0;background:var(--accent);color:#fff}.secondary{background:transparent;border:1px solid var(--line)}.note{padding:13px 14px;border-radius:13px;background:var(--surface-2);color:var(--muted);font-size:12px;line-height:1.6;margin-top:14px}.format-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.format{border:1px solid var(--line);background:transparent;border-radius:12px;padding:12px 5px;text-align:center;font:600 13px/1 "IBM Plex Sans",sans-serif}.format.active{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}.template{width:100%;border:1px solid var(--line);background:var(--bg);border-radius:12px;color:var(--text);padding:12px;margin-top:6px}.toast{position:fixed;left:50%;bottom:28px;transform:translate(-50%,15px);background:var(--text);color:var(--surface);padding:11px 16px;border-radius:12px;font-size:13px;z-index:60;opacity:0;pointer-events:none;transition:.2s}.toast.show{opacity:1;transform:translate(-50%,0)}
+    .roadmap-detail .milestone{padding:14px 0;border-bottom:1px solid var(--line)}.roadmap-detail .milestone:last-child{border-bottom:0}.milestone h4{margin:0 0 5px;font-size:15px}.milestone p{margin:0;color:var(--muted);font-size:13px;line-height:1.65}.milestone code{font-family:"IBM Plex Sans",monospace;color:var(--accent)}
+    @media(max-width:900px){.app{display:block;padding:0}.phone{border:0;border-radius:0;min-height:100vh;box-shadow:none}.panel{display:none}.toolbar{height:64px}.fabbar{position:fixed;bottom:max(18px,env(safe-area-inset-bottom));right:16px}.backdrop{padding:0;align-items:flex-end}.sheet{border-radius:24px 24px 0 0;max-height:88vh;width:100%}}
+    @media(max-width:450px){.toolbar{padding:0 10px 0 16px}.title-group h1{font-size:19px}.controls{padding:12px}.control-row{align-items:stretch}.seg{flex:1;display:grid;grid-template-columns:repeat(3,1fr)}.seg button{padding:8px 5px}.row{padding:12px 14px;grid-template-columns:48px minmax(0,1fr) auto}.app-icon{width:48px;height:48px}.format-row{grid-template-columns:1fr}.sheet-head{padding:20px 18px 12px}.sheet-body{padding:0 18px 22px}.fabbar{gap:8px}.action-btn{padding:0 14px}.meta{font-size:10.5px}}
+    @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+  </style>
+</head>
+<body>
+<main class="app">
+  <section class="phone" aria-label="App Inspector 交互原型">
+    <header class="toolbar">
+      <div class="title-group"><h1 id="viewTitle">用户应用</h1><div class="count"><span id="resultCount">5</span> 个结果 · 示例数据</div></div>
+      <div class="tools">
+        <button class="icon-btn" id="searchFocus" aria-label="搜索"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button>
+        <button class="icon-btn dots" id="menuBtn" aria-label="更多选项" aria-expanded="false"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button>
+        <div class="menu" id="menu">
+          <button data-scope="user" class="active"><span>仅用户应用</span><small>默认</small></button>
+          <button data-scope="system"><span>仅系统应用</span><small></small></button>
+          <button data-scope="all"><span>全部应用</span><small></small></button>
+          <button id="roadmapMenu"><span>功能实现方案</span><small>→</small></button>
+        </div>
+      </div>
+    </header>
+    <div class="controls">
+      <label class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="search" type="search" placeholder="搜索名称或包名" autocomplete="off"></label>
+      <div class="control-row">
+        <div class="seg" id="statusSeg"><button data-status="installed" class="active">已安装</button><button data-status="disabled">已停用</button><button data-status="removed">已删除</button></div>
+        <button class="sort-open" id="sortBtn"><svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h9M8 18h6M4 5v14m0 0-2-2m2 2 2-2"/></svg><span id="sortLabel">名称</span></button>
+      </div>
+    </div>
+    <div class="selection-bar" id="selectionBar"><strong><span id="selectedCount">0</span> 项已选择</strong><button id="selectAll">全选</button><button id="cancelSelect">取消</button></div>
+    <div class="screen">
+      <div class="list" id="appList" aria-live="polite"></div>
+      <div class="fabbar">
+        <button class="action-btn secondary-action" id="extractBtn" aria-label="提取安装包"><svg viewBox="0 0 24 24"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 18v3h14v-3"/></svg></button>
+        <button class="action-btn" id="exportBtn"><svg viewBox="0 0 24 24"><path d="M12 15V3m0 0L8 7m4-4 4 4M5 13v8h14v-8"/></svg>导出信息</button>
+      </div>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <div class="stage">UI 方案 · 可交互</div>
+    <h2>先把信息密度与批量操作做对</h2>
+    <p>默认只显示用户应用；搜索、范围、状态、排序彼此独立。长按列表进入多选，导出与提取都沿用同一选择。</p>
+    <ol class="roadmap">
+      <li><b class="num">M1</b><div><strong>应用扫描与列表</strong><span>PackageManager + Flow，读取名称、包名、版本、大小和状态。</span></div></li>
+      <li><b class="num">M2</b><div><strong>筛选、排序与详情</strong><span>用户 / 系统 / 全部；已安装 / 已停用 / 已删除；5 个排序字段。</span></div></li>
+      <li><b class="num">M3</b><div><strong>信息导出</strong><span>字段可选，生成 Markdown、TXT 与 XLSX，通过系统分享面板交付。</span></div></li>
+      <li><b class="num">M4</b><div><strong>安装包提取</strong><span>复制 base.apk 与 split APK；命名表达式、冲突处理和批量进度。</span></div></li>
+    </ol>
+    <div class="tech">Kotlin · Jetpack Compose · minSdk 26<br>PackageManager · SAF · Apache POI</div>
+    <button class="roadmap-btn" id="roadmapBtn">查看详细实现边界</button>
+  </aside>
+</main>
+
+<div class="backdrop" id="sortSheet" role="dialog" aria-modal="true" aria-labelledby="sortTitle">
+  <div class="sheet"><div class="sheet-head"><h3 id="sortTitle">排序</h3><button class="close" data-close>×</button></div><div class="sheet-body">
+    <div class="section-title">排序依据</div><div class="choices" id="sortChoices">
+      <button class="choice active" data-sort="name"><i class="radio"></i>应用名称</button>
+      <button class="choice" data-sort="package"><i class="radio"></i>应用包名</button>
+      <button class="choice" data-sort="size"><i class="radio"></i>APK 大小</button>
+      <button class="choice" data-sort="installedAt"><i class="radio"></i>首次安装时间</button>
+      <button class="choice" data-sort="updatedAt"><i class="radio"></i>最后更新时间</button>
+    </div>
+    <div class="section-title">方向</div><div class="format-row" id="direction"><button class="format active" data-dir="asc">升序 ↑</button><button class="format" data-dir="desc">降序 ↓</button></div>
+    <div class="sheet-actions"><button class="secondary" data-close>取消</button><button class="primary" id="applySort">应用排序</button></div>
+  </div></div>
+</div>
+
+<div class="backdrop" id="exportSheet" role="dialog" aria-modal="true" aria-labelledby="exportTitle">
+  <div class="sheet"><div class="sheet-head"><h3 id="exportTitle">导出应用信息</h3><button class="close" data-close>×</button></div><div class="sheet-body">
+    <div class="section-title">导出范围</div><div class="choices" id="exportScope">
+      <button class="choice active" data-export-scope="visible"><i class="radio"></i><span>当前筛选结果 <small id="visibleExportCount"></small></span></button>
+      <button class="choice" data-export-scope="selected"><i class="radio"></i><span>已选择应用 <small id="selectedExportCount"></small></span></button>
+    </div>
+    <div class="section-title">包含字段</div><div class="choices" id="fields">
+      <button class="choice active" data-field="name"><i class="check"></i>应用名称</button>
+      <button class="choice active" data-field="package"><i class="check"></i>应用包名</button>
+      <button class="choice active" data-field="versionName"><i class="check"></i>版本名称</button>
+      <button class="choice active" data-field="versionCode"><i class="check"></i>版本号</button>
+    </div>
+    <div class="section-title">文件格式</div><div class="format-row" id="formats"><button class="format active" data-format="md">Markdown</button><button class="format" data-format="txt">TXT</button><button class="format" data-format="xlsx">XLSX</button></div>
+    <div class="note" id="exportNote">此原型可直接导出示例数据。正式 Android 版通过系统文件选择器保存或分享。</div>
+    <div class="sheet-actions"><button class="secondary" data-close>取消</button><button class="primary" id="doExport">生成并下载</button></div>
+  </div></div>
+</div>
+
+<div class="backdrop" id="extractSheet" role="dialog" aria-modal="true" aria-labelledby="extractTitle">
+  <div class="sheet"><div class="sheet-head"><h3 id="extractTitle">提取安装包</h3><button class="close" data-close>×</button></div><div class="sheet-body">
+    <div class="section-title">文件命名</div><input class="template" id="template" value="{A}_{V}_{P}.apk" aria-label="安装包命名表达式">
+    <div class="note"><b>可用变量</b><br>{A} 应用名称　{P} 应用包名<br>{V} 版本名称　{C} 版本号</div>
+    <div class="section-title">正式版处理方式</div><div class="choices">
+      <div class="choice"><i class="check" style="background:var(--accent);border-color:var(--accent)"></i><span>普通应用：复制 <b>base.apk</b></span></div>
+      <div class="choice"><i class="check" style="background:var(--accent);border-color:var(--accent)"></i><span>拆分包：导出为同名目录或 .apks</span></div>
+      <div class="choice"><i class="check" style="background:var(--accent);border-color:var(--accent)"></i><span>批量任务：显示逐项进度与失败原因</span></div>
+    </div>
+    <div class="note">浏览器原型无法读取手机已安装 APK。此操作将在 Android 原生版中使用 PackageManager 获取 sourceDir，并通过 SAF 写入用户选择的目录。</div>
+    <div class="sheet-actions"><button class="primary" data-close>知道了</button></div>
+  </div></div>
+</div>
+
+<div class="backdrop" id="roadmapSheet" role="dialog" aria-modal="true" aria-labelledby="roadmapTitle">
+  <div class="sheet roadmap-detail"><div class="sheet-head"><h3 id="roadmapTitle">功能实现边界</h3><button class="close" data-close>×</button></div><div class="sheet-body">
+    <div class="milestone"><h4>应用发现</h4><p>使用 <code>PackageManager.getInstalledApplications()</code>。Android 11+ 在清单中声明 <code>QUERY_ALL_PACKAGES</code> 会受到应用商店审核限制；若不公开上架，可用于设备工具。</p></div>
+    <div class="milestone"><h4>“已删除”定义</h4><p>PackageManager 无法直接列出已彻底卸载的应用。正式版需在本地保存扫描快照，与当前列表做差异比对；仅显示 App Inspector 曾经扫描到、之后消失的项目。</p></div>
+    <div class="milestone"><h4>“已停用”识别</h4><p>综合 <code>ApplicationInfo.enabled</code> 与组件启用状态判断。系统应用与用户应用通过 <code>FLAG_SYSTEM</code> / <code>FLAG_UPDATED_SYSTEM_APP</code> 区分。</p></div>
+    <div class="milestone"><h4>APK 大小与拆分包</h4><p>统计 <code>sourceDir</code> 和 <code>splitSourceDirs</code>。提取时保留所有 split，避免只导出 base.apk 后无法复原安装。</p></div>
+    <div class="milestone"><h4>导出</h4><p>Markdown / TXT 使用流式写入；XLSX 建议 Apache POI SXSSF。统一从当前查询快照生成，防止导出过程中应用列表变化。</p></div>
+    <div class="milestone"><h4>权限与发布</h4><p>优先使用 Storage Access Framework，不申请“所有文件访问”权限。若计划上架 Google Play，需要先确认“已安装应用清单”是否属于核心功能并准备权限声明。</p></div>
+  </div></div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+(function(){
+  var apps=[
+    {id:1,name:'备忘录',package:'com.example.notes',versionName:'3.8.1',versionCode:381,size:38.4,type:'user',status:'installed',installedAt:1714968000,updatedAt:1759557600,color:'i4',abbr:'记'},
+    {id:2,name:'文件管理',package:'com.example.files',versionName:'15.2.6',versionCode:15206,size:54.8,type:'system',status:'installed',installedAt:1704067200,updatedAt:1759298400,color:'i1',abbr:'文'},
+    {id:3,name:'阅读器',package:'org.example.reader',versionName:'6.4.0',versionCode:640,size:92.1,type:'user',status:'installed',installedAt:1722744000,updatedAt:1759125600,color:'i2',abbr:'阅'},
+    {id:4,name:'时钟',package:'com.android.deskclock',versionName:'14.1',versionCode:141,size:18.7,type:'system',status:'installed',installedAt:1704067200,updatedAt:1758434400,color:'i5',abbr:'钟'},
+    {id:5,name:'天气',package:'com.example.weather',versionName:'9.6.2',versionCode:962,size:71.3,type:'system',status:'disabled',installedAt:1704067200,updatedAt:1758261600,color:'i7',abbr:'天'},
+    {id:6,name:'播客',package:'fm.example.podcast',versionName:'2.9.4',versionCode:294,size:116.5,type:'user',status:'disabled',installedAt:1730433600,updatedAt:1758002400,color:'i3',abbr:'播'},
+    {id:7,name:'旧版计算器',package:'com.example.calc.old',versionName:'4.0.3',versionCode:403,size:12.9,type:'user',status:'removed',installedAt:1696132800,updatedAt:1743480000,color:'i6',abbr:'算'},
+    {id:8,name:'相册',package:'com.example.gallery',versionName:'8.2.0',versionCode:820,size:183.2,type:'user',status:'installed',installedAt:1717560000,updatedAt:1757743200,color:'i8',abbr:'图'}
+  ];
+  var state={scope:'user',status:'installed',query:'',sort:'name',dir:'asc',selected:new Set(),exportScope:'visible',format:'md',fields:new Set(['name','package','versionName','versionCode'])};
+  var labels={name:'名称',package:'包名',size:'APK 大小',installedAt:'首次安装',updatedAt:'最后更新'};
+  var $=function(s){return document.querySelector(s)}, $$=function(s){return Array.prototype.slice.call(document.querySelectorAll(s))};
+  function current(){
+    var q=state.query.trim().toLowerCase();
+    var arr=apps.filter(function(a){return (state.scope==='all'||a.type===state.scope)&&a.status===state.status&&(!q||a.name.toLowerCase().indexOf(q)>-1||a.package.toLowerCase().indexOf(q)>-1)});
+    arr.sort(function(a,b){var av=a[state.sort],bv=b[state.sort];if(typeof av==='string'){return av.localeCompare(bv,'zh-CN')*(state.dir==='asc'?1:-1)}return (av-bv)*(state.dir==='asc'?1:-1)});return arr;
+  }
+  function render(){
+    var arr=current(); $('#resultCount').textContent=arr.length; $('#viewTitle').textContent=state.scope==='user'?'用户应用':state.scope==='system'?'系统应用':'全部应用';
+    $('#sortLabel').textContent=labels[state.sort]+(state.dir==='asc'?' ↑':' ↓');
+    $('#appList').innerHTML=arr.length?'<div class="group-label">'+(state.status==='installed'?'当前设备':state.status==='disabled'?'已停用':'历史扫描记录')+'</div>'+arr.map(function(a){return '<button class="row '+(state.selected.has(a.id)?'selected':'')+'" data-id="'+a.id+'"><span class="app-icon '+a.color+'">'+a.abbr+'</span><span class="app-copy"><span class="name-line"><span class="name">'+a.name+'</span>'+(a.status==='disabled'?'<span class="badge disabled">已停用</span>':a.status==='removed'?'<span class="badge removed">已删除</span>':a.type==='system'?'<span class="badge">系统</span>':'')+'</span><span class="package">'+a.package+'</span><span class="meta">版本 '+a.versionName+' ('+a.versionCode+') · '+a.size.toFixed(1)+' MB</span></span><span class="pick"></span></button>'}).join(''):'<div style="padding:70px 22px;text-align:center;color:var(--muted)">没有符合条件的应用<br><small>试试更改范围、状态或搜索词</small></div>';
+    $$('.row').forEach(function(el){el.onclick=function(){var id=Number(el.dataset.id);state.selected.has(id)?state.selected.delete(id):state.selected.add(id);updateSelection();render()}});updateSelection();
+  }
+  function updateSelection(){var n=state.selected.size;$('#selectedCount').textContent=n;$('#selectionBar').classList.toggle('show',n>0)}
+  function openSheet(id){$(id).classList.add('show')}
+  function closeSheets(){$$('.backdrop').forEach(function(x){x.classList.remove('show')})}
+  function toast(t){var el=$('#toast');el.textContent=t;el.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(function(){el.classList.remove('show')},2200)}
+  $('#menuBtn').onclick=function(){var o=$('#menu').classList.toggle('open');this.setAttribute('aria-expanded',o)};
+  document.addEventListener('click',function(e){if(!e.target.closest('.tools')){$('#menu').classList.remove('open');$('#menuBtn').setAttribute('aria-expanded','false')}});
+  $$('#menu [data-scope]').forEach(function(b){b.onclick=function(){state.scope=b.dataset.scope;$$('#menu [data-scope]').forEach(function(x){x.classList.toggle('active',x===b)});$('#menu').classList.remove('open');render()}});
+  $('#searchFocus').onclick=function(){$('#search').focus()};$('#search').oninput=function(){state.query=this.value;render()};
+  $$('#statusSeg button').forEach(function(b){b.onclick=function(){state.status=b.dataset.status;$$('#statusSeg button').forEach(function(x){x.classList.toggle('active',x===b)});render()}});
+  $('#sortBtn').onclick=function(){openSheet('#sortSheet')};
+  $$('#sortChoices .choice').forEach(function(b){b.onclick=function(){state.pendingSort=b.dataset.sort;$$('#sortChoices .choice').forEach(function(x){x.classList.toggle('active',x===b)})}});
+  $$('#direction .format').forEach(function(b){b.onclick=function(){state.pendingDir=b.dataset.dir;$$('#direction .format').forEach(function(x){x.classList.toggle('active',x===b)})}});
+  $('#applySort').onclick=function(){state.sort=state.pendingSort||state.sort;state.dir=state.pendingDir||state.dir;closeSheets();render()};
+  $('#cancelSelect').onclick=function(){state.selected.clear();render()};$('#selectAll').onclick=function(){current().forEach(function(a){state.selected.add(a.id)});render()};
+  $('#exportBtn').onclick=function(){var n=current().length;$('#visibleExportCount').textContent='（'+n+' 项）';$('#selectedExportCount').textContent='（'+state.selected.size+' 项）';openSheet('#exportSheet')};
+  $$('#exportScope .choice').forEach(function(b){b.onclick=function(){state.exportScope=b.dataset.exportScope;$$('#exportScope .choice').forEach(function(x){x.classList.toggle('active',x===b)})}});
+  $$('#fields .choice').forEach(function(b){b.onclick=function(){var f=b.dataset.field;state.fields.has(f)?state.fields.delete(f):state.fields.add(f);b.classList.toggle('active',state.fields.has(f))}});
+  $$('#formats .format').forEach(function(b){b.onclick=function(){state.format=b.dataset.format;$$('#formats .format').forEach(function(x){x.classList.toggle('active',x===b)});$('#exportNote').textContent=state.format==='xlsx'?'XLSX 将使用 SpreadsheetML 兼容工作簿生成；正式版建议 Apache POI。':'此原型可直接导出示例数据。正式 Android 版通过系统文件选择器保存或分享。'}});
+  function esc(v){return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+  $('#doExport').onclick=function(){
+    var rows=state.exportScope==='selected'?apps.filter(function(a){return state.selected.has(a.id)}):current();if(!rows.length){toast('当前导出范围没有应用');return}if(!state.fields.size){toast('请至少选择一个字段');return}
+    var map={name:'应用名称',package:'应用包名',versionName:'版本名称',versionCode:'版本号'},keys=Array.from(state.fields),content,type,name='app-inspector-export.'+state.format;
+    if(state.format==='md'){content='| '+keys.map(function(k){return map[k]}).join(' | ')+' |\n| '+keys.map(function(){return'---'}).join(' | ')+' |\n'+rows.map(function(r){return'| '+keys.map(function(k){return r[k]}).join(' | ')+' |'}).join('\n');type='text/markdown;charset=utf-8'}
+    else if(state.format==='txt'){content=rows.map(function(r){return keys.map(function(k){return map[k]+': '+r[k]}).join('\n')}).join('\n\n---\n\n');type='text/plain;charset=utf-8'}
+    else{var table='<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"></head><body><table><tr>'+keys.map(function(k){return'<th>'+esc(map[k])+'</th>'}).join('')+'</tr>'+rows.map(function(r){return'<tr>'+keys.map(function(k){return'<td>'+esc(r[k])+'</td>'}).join('')+'</tr>'}).join('')+'</table></body></html>';content=table;type='application/vnd.ms-excel';name='app-inspector-export.xls'}
+    var url=URL.createObjectURL(new Blob([content],{type:type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(function(){URL.revokeObjectURL(url)},1000);closeSheets();toast('已生成 '+name);
+  };
+  $('#extractBtn').onclick=function(){openSheet('#extractSheet')};$('#roadmapBtn').onclick=function(){openSheet('#roadmapSheet')};$('#roadmapMenu').onclick=function(){$('#menu').classList.remove('open');openSheet('#roadmapSheet')};
+  $$('[data-close]').forEach(function(b){b.onclick=closeSheets});$$('.backdrop').forEach(function(b){b.addEventListener('click',function(e){if(e.target===b)closeSheets()})});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')closeSheets()});render();
+})();
+</script>
+</body>
+</html>
