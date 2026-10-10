@@ -23,8 +23,25 @@ class AppRepository(private val context: Context) {
         } else {
             pm.getInstalledPackages(PackageManager.GET_META_DATA)
         }
-        val result = ArrayList<AppEntry>(packages.size)
-        for (pi in packages) {
+        // pm uninstall --user 0 卸载的包：仅在 MATCH_UNINSTALLED_PACKAGES 下可见
+        @Suppress("DEPRECATION")
+        val allPackages = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pm.getInstalledPackages(
+                PackageManager.PackageInfoFlags.of(
+                    (PackageManager.GET_META_DATA or
+                        PackageManager.MATCH_UNINSTALLED_PACKAGES).toLong()
+                )
+            )
+        } else {
+            pm.getInstalledPackages(
+                PackageManager.GET_META_DATA or PackageManager.MATCH_UNINSTALLED_PACKAGES
+            )
+        }
+        val installedNames = packages.map { it.packageName }.toHashSet()
+
+        val result = ArrayList<AppEntry>(allPackages.size)
+        for (pi in allPackages) {
+            val isUninstalled = pi.packageName !in installedNames
             val ai: ApplicationInfo = pi.applicationInfo ?: continue
             val isSystem = (ai.flags and ApplicationInfo.FLAG_SYSTEM) != 0
             val isUpdatedSystemApp = (ai.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
@@ -57,6 +74,7 @@ class AppRepository(private val context: Context) {
                     isSystem = isSystem,
                     isUpdatedSystemApp = isUpdatedSystemApp,
                     isEnabled = isEnabled,
+                    isUninstalled = isUninstalled,
                     sourceDir = ai.sourceDir,
                     splitSourceDirs = ai.splitSourceDirs?.toList().orEmpty(),
                     applicationInfo = ai,

@@ -29,6 +29,17 @@ Android 应用信息查看与管理工具：浏览已安装应用、排序筛选
 
 ## 构建
 
+**方式一：Gradle 构建（推荐）**——需 JDK 21、Android SDK（platform android-35、
+build-tools 34.0.0+）、Gradle 8.7+：
+
+```bash
+gradle assembleDebug --no-daemon
+```
+
+产物：`app/build/outputs/apk/debug/app-debug.apk`。
+
+**方式二：手工构建（不依赖 Gradle）**：
+
 ```bash
 cd tools/manual-build
 ./build.sh
@@ -37,9 +48,8 @@ cd tools/manual-build
 产物输出到仓库根目录 `AppInspector-v1.0-debug.apk`。
 详细步骤与常见问题见 [`tools/manual-build/BUILD_STEPS.md`](tools/manual-build/BUILD_STEPS.md)。
 
-> 说明：本项目也保留了标准 Gradle 工程文件（`settings.gradle.kts` 等），
-> 但在某些沙箱环境里 Gradle daemon 的本地 socket 通信会被拦截导致无法构建，
-> 此时请使用上面的手工构建流程（已验证一次跑通）。
+> 说明：两种方式均已验证跑通。在某些 Gradle daemon 本地 socket 通信被拦截的
+> 受限沙箱环境里，请使用方式二的手工构建流程。
 
 ## 截图
 

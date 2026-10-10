@@ -12,14 +12,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import android.content.pm.PackageManager
 import dev.appinspector.data.AppEntry
 import dev.appinspector.data.AppFilter
 import dev.appinspector.data.AppRepository
 import dev.appinspector.data.AppSettings
-import dev.appinspector.data.AppSnapshot
 import dev.appinspector.data.SettingsStore
-import dev.appinspector.data.SnapshotDb
 import dev.appinspector.data.SortKey
+import dev.appinspector.shizuku.ShizukuManager
+import rikka.shizuku.Shizuku
 import dev.appinspector.export.ALL_EXPORT_FIELDS
 import dev.appinspector.export.DEFAULT_EXPORT_KEYS
 import dev.appinspector.export.ExportFormat
@@ -42,17 +43,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo = AppRepository(app)
     private val store = SettingsStore(app)
-    private val dao = SnapshotDb.get(app)
 
     val settings: StateFlow<AppSettings> = store.settings
 
     var loading by mutableStateOf(true)
         private set
     private var allApps: List<AppEntry> = emptyList()
-    var deletedSnapshots by mutableStateOf<List<AppSnapshot>>(emptyList())
-        private set
-    var snapshotCount by mutableStateOf(0)
-        private set
 
     var search by mutableStateOf("")
     var searching by mutableStateOf(false)
@@ -64,6 +60,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var showSort by mutableStateOf(false)
     var showExport by mutableStateOf(false)
     var detailEntry by mutableStateOf<AppEntry?>(null)
+
+    // Shizuku
+    var shizukuStatus by mutableStateOf<ShizukuManager.Status>(ShizukuManager.Status.NotInstalled)
+        private set
+    var showShizukuDialog by mutableStateOf(false)
+    var confirmDeleteEntry by mutableStateOf<AppEntry?>(null)
+
+    private val shizukuPermissionListener =
+        Shizuku.OnRequestPermissionResultListener { _, grantResult ->
+            if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                refreshShizukuStatus()
+                toastMsg = "已获得 Shizuku 授权"
+            } else {
+                toastMsg = "未获得 Shizuku 授权，无法执行停用/删除"
+            }
+        }
 
     var progress by mutableStateOf<ExtractProgress?>(null)
         private set
@@ -80,22 +92,59 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         refresh()
+        ShizukuManager.addPermissionListener(shizukuPermissionListener)
+        refreshShizukuStatus()
+    }
+
+    override fun onCleared() {
+        ShizukuManager.removePermissionListener(shizukuPermissionListener)
+        super.onCleared()
+    }
+
+    /** 刷新 Shizuku 可用状态 */
+    fun refreshShizukuStatus() {
+        shizukuStatus = ShizukuManager.getStatus(getApplication())
+    }
+
+    fun requestShizukuPermission() = ShizukuManager.requestPermission()
+
+    /** 停用/启用应用（需 Shizuku） */
+    fun setAppEnabled(entry: AppEntry, enabled: Boolean) {
+        viewModelScope.launch {
+            val res = ShizukuManager.setEnabled(getApplication(), entry.packageName, enabled)
+            res.onSuccess {
+                toastMsg = if (enabled) "已启用 ${entry.appName}" else "已停用 ${entry.appName}"
+                // 乐观更新详情弹窗，随后 refresh() 会载入真实状态
+                if (detailEntry?.packageName == entry.packageName) {
+                    detailEntry = entry.copy(isEnabled = enabled)
+                }
+                refresh()
+            }.onFailure {
+                toastMsg = "操作失败：${it.message}"
+            }
+        }
+    }
+
+    /** 删除应用（pm uninstall --user 0，需 Shizuku），操作前请先弹窗确认 */
+    fun uninstallApp(entry: AppEntry) {
+        viewModelScope.launch {
+            val res = ShizukuManager.uninstall(getApplication(), entry.packageName)
+            res.onSuccess {
+                toastMsg = "已删除 ${entry.appName}"
+                confirmDeleteEntry = null
+                detailEntry = null
+                refresh()
+            }.onFailure {
+                toastMsg = "删除失败：${it.message}"
+            }
+        }
     }
 
     fun refresh() {
         viewModelScope.launch {
             loading = true
             try {
-                val apps = repo.loadApps()
-                allApps = apps
-                val now = System.currentTimeMillis()
-                dao.upsertAll(
-                    apps.map {
-                        AppSnapshot(it.packageName, it.appName, it.versionName, it.versionCode, now)
-                    }
-                )
-                snapshotCount = dao.count().toInt()
-                deletedSnapshots = dao.deleted(apps.map { it.packageName })
+                allApps = repo.loadApps()
             } catch (t: Throwable) {
                 toastMsg = "加载失败：${t.message}"
             }
@@ -111,7 +160,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val s = settings.value
         var list = allApps
         if (!s.showSystem) list = list.filter { !it.isSystem }
-        if (filter == AppFilter.DISABLED) list = list.filter { !it.isEnabled }
+        if (filter == AppFilter.DISABLED) list = list.filter { !it.isEnabled && !it.isUninstalled }
+        if (filter == AppFilter.DELETED) list = list.filter { it.isUninstalled }
         val q = search.trim()
         if (q.isNotEmpty()) {
             list = list.filter {
@@ -264,15 +314,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 "提取完成：成功 ${res.ok} 个，失败 ${res.failed.size} 个"
             }
-        }
-    }
-
-    fun clearSnapshots() {
-        viewModelScope.launch {
-            dao.clear()
-            snapshotCount = 0
-            deletedSnapshots = emptyList()
-            toastMsg = "快照已清空，将从下次刷新开始重新记录"
         }
     }
 

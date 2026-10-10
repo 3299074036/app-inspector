@@ -22,7 +22,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -149,14 +148,6 @@ fun ExtractSettingsScreen(
                 )
             }
 
-            Spacer(Modifier.height(4.dp))
-            Text("已删除筛选快照", style = MaterialTheme.typography.titleSmall)
-            Text(
-                "已记录 ${vm.snapshotCount} 个应用的安装快照，用于「已删除」筛选。每次刷新列表时自动更新。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedButton(onClick = { vm.clearSnapshots() }) { Text("清空快照") }
         }
     }
 }

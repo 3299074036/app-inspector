@@ -15,6 +15,8 @@ data class AppEntry(
     val isSystem: Boolean,
     val isUpdatedSystemApp: Boolean,
     val isEnabled: Boolean,
+    /** 是否被 pm uninstall --user 0 卸载（包仍在，仅对当前用户不可见） */
+    val isUninstalled: Boolean = false,
     val sourceDir: String?,
     val splitSourceDirs: List<String>,
     val applicationInfo: ApplicationInfo,

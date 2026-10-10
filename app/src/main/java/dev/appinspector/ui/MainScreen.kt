@@ -1,5 +1,6 @@
 package dev.appinspector.ui
 
+import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -22,10 +23,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -33,11 +36,13 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Switch
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -64,7 +69,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
@@ -72,8 +80,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.appinspector.data.AppEntry
 import dev.appinspector.data.AppFilter
 import dev.appinspector.data.AppIcon
-import dev.appinspector.data.AppSnapshot
 import dev.appinspector.data.SortKey
+import dev.appinspector.shizuku.ShizukuManager
 import dev.appinspector.export.ALL_EXPORT_FIELDS
 import dev.appinspector.export.ExportFormat
 import dev.appinspector.export.formatDate
@@ -145,13 +153,31 @@ fun MainScreen(
                         ) {
                             DropdownMenuItem(
                                 text = { Text("显示系统应用") },
-                                leadingIcon = {
-                                    Checkbox(
+                                trailingIcon = {
+                                    Switch(
                                         checked = settings.showSystem,
-                                        onCheckedChange = null,
+                                        onCheckedChange = {
+                                            vm.setShowSystem(it)
+                                            menuOpen = false
+                                        },
                                     )
                                 },
-                                onClick = { vm.setShowSystem(!settings.showSystem) },
+                                onClick = {
+                                    vm.setShowSystem(!settings.showSystem)
+                                    menuOpen = false
+                                },
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Shizuku（停用/删除）") },
+                                trailingIcon = {
+                                    ShizukuDot(vm.shizukuStatus)
+                                },
+                                onClick = {
+                                    menuOpen = false
+                                    vm.refreshShizukuStatus()
+                                    vm.showShizukuDialog = true
+                                },
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
@@ -237,11 +263,7 @@ fun MainScreen(
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                val count = if (vm.filter == AppFilter.DELETED) {
-                    vm.deletedSnapshots.size
-                } else {
-                    vm.currentList().size
-                }
+                val count = vm.currentList().size
                 Text(
                     "共 $count 个",
                     style = MaterialTheme.typography.bodySmall,
@@ -254,10 +276,6 @@ fun MainScreen(
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator()
                     }
-                }
-
-                vm.filter == AppFilter.DELETED -> {
-                    DeletedList(vm)
                 }
 
                 else -> {
@@ -291,6 +309,9 @@ fun MainScreen(
         }
     }
 
+    if (vm.showShizukuDialog) {
+        ShizukuDialog(vm = vm, onDismiss = { vm.showShizukuDialog = false })
+    }
     if (vm.showSort) {
         SortDialog(vm = vm, onDismiss = { vm.showSort = false })
     }
@@ -304,9 +325,37 @@ fun MainScreen(
     vm.detailEntry?.let { entry ->
         AppDetailDialog(
             entry = entry,
+            shizukuReady = vm.shizukuStatus == ShizukuManager.Status.Ready,
+            onToggleEnabled = { vm.setAppEnabled(entry, !entry.isEnabled) },
+            onDelete = { vm.confirmDeleteEntry = entry },
+            onOpenShizuku = { vm.showShizukuDialog = true },
             onExtract = { vm.requestExtract(listOf(entry)); vm.detailEntry = null },
             onOpenSystemSettings = { vm.openAppSettings(context, entry.packageName) },
+            onCopied = { vm.showToast("已复制") },
             onDismiss = { vm.detailEntry = null },
+        )
+    }
+    vm.confirmDeleteEntry?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { vm.confirmDeleteEntry = null },
+            title = { Text("删除应用") },
+            text = {
+                Text(
+                    "确定要删除「${entry.appName}」(${entry.packageName})吗？\n\n" +
+                        "对应命令：pm uninstall --user 0 ${entry.packageName}\n" +
+                        "系统应用的安装包会保留在系统分区，可恢复。"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { vm.uninstallApp(entry) },
+                ) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.confirmDeleteEntry = null }) { Text("取消") }
+            },
         )
     }
     vm.progress?.let { p ->
@@ -367,6 +416,14 @@ private fun AppRow(
                         MaterialTheme.colorScheme.onErrorContainer,
                     )
                 }
+                if (entry.isUninstalled) {
+                    Spacer(Modifier.width(6.dp))
+                    TinyBadge(
+                        "已删除",
+                        MaterialTheme.colorScheme.tertiaryContainer,
+                        MaterialTheme.colorScheme.onTertiaryContainer,
+                    )
+                }
             }
         },
         supportingContent = {
@@ -420,66 +477,63 @@ private fun TinyBadge(
 }
 
 @Composable
-private fun DeletedList(vm: AppViewModel) {
-    val list = vm.deletedSnapshots
-    if (list.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("暂无已删除应用记录")
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "快照会在每次刷新列表时自动记录",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
+private fun ShizukuDot(status: ShizukuManager.Status) {
+    val color = if (status == ShizukuManager.Status.Ready) {
+        Color(0xFF4CAF50)
     } else {
-        LazyColumn(Modifier.fillMaxSize()) {
-            items(list, key = { it.packageName }) { snap ->
-                DeletedRow(snap)
-                HorizontalDivider()
-            }
-        }
+        MaterialTheme.colorScheme.outline
     }
+    Surface(color = color, shape = CircleShape, modifier = Modifier.size(10.dp)) {}
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DeletedRow(snap: AppSnapshot) {
-    ListItem(
-        headlineContent = {
-            Text(snap.appName, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        },
-        supportingContent = {
-            Column {
-                Text(
-                    "${snap.packageName} · ${snap.versionName ?: "?"}(${snap.versionCode})",
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text(
-                    "最后见到 ${formatDate(snap.lastSeen)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        },
-        leadingContent = {
-            Surface(
-                color = MaterialTheme.colorScheme.errorContainer,
-                shape = RoundedCornerShape(12.dp),
-            ) {
-                Box(
-                    Modifier.size(48.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        "删",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                    )
+private fun ShizukuDialog(vm: AppViewModel, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val status = vm.shizukuStatus
+    val (title, body) = when (status) {
+        ShizukuManager.Status.NotInstalled -> "Shizuku 未安装" to
+            "停用/删除功能需要借助 Shizuku（免 Root 获得 ADB 级权限）。\n\n请先安装 Shizuku App（GitHub RikkaApps/Shizuku 或 F-Droid），然后回来继续。"
+        ShizukuManager.Status.NotRunning -> "Shizuku 未运行" to
+            "按以下步骤激活 Shizuku（Android 11+ 无需电脑）：\n\n" +
+                "1. 设置 → 关于手机 → 连点 7 次「版本号」打开开发者选项\n" +
+                "2. 开发者选项中打开「无线调试」\n" +
+                "3. 打开 Shizuku App，按引导配对后点「启动」\n\n" +
+                "注意：每次重启手机后需重新进 Shizuku 点「启动」。\n" +
+                "ColorOS 如启动失败，请关闭「权限监控」。"
+        ShizukuManager.Status.NoPermission -> "需要 Shizuku 授权" to
+            "允许「应用检查器」使用 Shizuku，才能执行停用/启用/删除操作（效果等同 adb shell pm 命令）。"
+        ShizukuManager.Status.Ready -> "Shizuku 已连接" to
+            "现在可以在应用详情页直接停用/启用/删除应用，效果等同 adb shell pm 命令。"
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(body) },
+        confirmButton = {
+            Row {
+                when (status) {
+                    ShizukuManager.Status.NotInstalled -> {
+                        TextButton(onClick = {
+                            runCatching {
+                                context.startActivity(
+                                    Intent(
+                                        Intent.ACTION_VIEW,
+                                        Uri.parse("https://github.com/RikkaApps/Shizuku/releases"),
+                                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            }
+                        }) { Text("去下载") }
+                    }
+                    ShizukuManager.Status.NotRunning -> {
+                        TextButton(onClick = { vm.refreshShizukuStatus() }) { Text("刷新状态") }
+                    }
+                    ShizukuManager.Status.NoPermission -> {
+                        TextButton(onClick = { vm.requestShizukuPermission() }) { Text("去授权") }
+                    }
+                    ShizukuManager.Status.Ready -> {}
                 }
+                TextButton(onClick = onDismiss) { Text("关闭") }
             }
         },
     )
@@ -620,10 +674,20 @@ private fun ExportDialog(
 @Composable
 private fun AppDetailDialog(
     entry: AppEntry,
+    shizukuReady: Boolean,
+    onToggleEnabled: () -> Unit,
+    onDelete: () -> Unit,
+    onOpenShizuku: () -> Unit,
     onExtract: () -> Unit,
     onOpenSystemSettings: () -> Unit,
+    onCopied: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val clipboard = LocalClipboardManager.current
+    fun copy(value: String) {
+        clipboard.setText(AnnotatedString(value))
+        onCopied()
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(entry.appName) },
@@ -632,17 +696,60 @@ private fun AppDetailDialog(
                 Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                DetailRow("应用包名", entry.packageName)
-                DetailRow("版本名称", entry.versionName ?: "未知")
-                DetailRow("版本号", entry.versionCode.toString())
-                DetailRow("APK 大小", formatSize(entry.apkSize))
-                DetailRow("首次安装", formatDate(entry.firstInstallTime))
-                DetailRow("最后更新", formatDate(entry.lastUpdateTime))
-                DetailRow("系统应用", if (entry.isSystem) "是" + if (entry.isUpdatedSystemApp) "（已更新）" else "" else "否")
-                DetailRow("状态", if (entry.isEnabled) "已启用" else "已停用")
-                DetailRow("安装包路径", entry.sourceDir ?: "未知")
+                DetailRow("应用包名", entry.packageName, onCopy = ::copy)
+                DetailRow("版本名称", entry.versionName ?: "未知", onCopy = ::copy)
+                DetailRow("版本号", entry.versionCode.toString(), onCopy = ::copy)
+                DetailRow("APK 大小", formatSize(entry.apkSize), onCopy = ::copy)
+                DetailRow("首次安装", formatDate(entry.firstInstallTime), onCopy = ::copy)
+                DetailRow("最后更新", formatDate(entry.lastUpdateTime), onCopy = ::copy)
+                DetailRow("系统应用", if (entry.isSystem) "是" + if (entry.isUpdatedSystemApp) "（已更新）" else "" else "否", onCopy = ::copy)
+                DetailRow(
+                    "状态",
+                    when {
+                        entry.isUninstalled -> "已删除"
+                        entry.isEnabled -> "已启用"
+                        else -> "已停用"
+                    },
+                    onCopy = ::copy,
+                )
+                DetailRow("安装包路径", entry.sourceDir ?: "未知", onCopy = ::copy)
                 if (entry.splitSourceDirs.isNotEmpty()) {
-                    DetailRow("拆分包数量", entry.splitSourceDirs.size.toString())
+                    DetailRow("拆分包数量", entry.splitSourceDirs.size.toString(), onCopy = ::copy)
+                }
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                // Shizuku 快捷操作：停用/启用/删除
+                if (shizukuReady) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (!entry.isUninstalled) {
+                            FilledTonalButton(
+                                onClick = onToggleEnabled,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(if (entry.isEnabled) "停用" else "启用")
+                            }
+                        }
+                        OutlinedButton(
+                            onClick = onDelete,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(
+                                "删除",
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                    Text(
+                        "经 Shizuku 执行，等同 adb shell pm 命令",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    TextButton(onClick = onOpenShizuku) {
+                        Text("停用 / 删除需要 Shizuku，点击去设置 →")
+                    }
                 }
             }
         },
@@ -659,17 +766,31 @@ private fun AppDetailDialog(
 }
 
 @Composable
-private fun DetailRow(label: String, value: String) {
+private fun DetailRow(label: String, value: String, onCopy: (String) -> Unit) {
     Column {
         Text(
             label,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Text(
-            value,
-            style = MaterialTheme.typography.bodyMedium,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                value,
+                style = MaterialTheme.typography.bodyMedium,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            IconButton(
+                onClick = { onCopy(value) },
+                modifier = Modifier.size(32.dp),
+            ) {
+                Icon(
+                    Icons.Filled.ContentCopy,
+                    contentDescription = "复制$label",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
     }
 }

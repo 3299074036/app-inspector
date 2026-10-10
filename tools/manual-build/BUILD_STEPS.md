@@ -1,6 +1,48 @@
-# App Inspector 构建步骤（不依赖 Gradle）
+# App Inspector 构建步骤
 
-本项目使用纯命令行工具链手工构建 APK，不需要 Gradle（在某些受限沙箱环境里
+## 方式一：Gradle 构建（推荐）
+
+### 前置要求
+
+| 工具 | 版本要求 | 说明 |
+|---|---|---|
+| JDK | 21 | 运行 Gradle 与 AGP；`JAVA_HOME` 指向它 |
+| Android SDK | platform android-35、build-tools 34.0.0+ | `ANDROID_HOME` / `ANDROID_SDK_ROOT` 指向它 |
+| Gradle | 8.7+ | 本仓库未附带 gradle wrapper，请自行安装 |
+
+### 构建
+
+```bash
+gradle assembleDebug --no-daemon
+```
+
+构建产物：`app/build/outputs/apk/debug/app-debug.apk`（debug 签名）。
+
+### 说明
+
+- `app/build.gradle.kts` 里已配好两处去重，可直接构建成功：
+  - `configurations.all { exclude ... }`：去掉旧 `-ktx` 构件
+    （`collection-ktx`、`lifecycle-viewmodel-ktx`），它们的类已全部并入新构件，
+    同时保留会导致 d8 报 `Duplicate class`；
+  - `packaging.resources.excludes`：去掉 KMP 构件自带的 Kotlin/Native 编译器
+    元数据（`*.knm`、`commonMain/`、`nonJvmMain/` 等），它们在多个 jar 中重复，
+    且 Android 运行时用不到。
+- 校验产物：
+
+```bash
+apksigner verify app/build/outputs/apk/debug/app-debug.apk
+zipalign -c 4 app/build/outputs/apk/debug/app-debug.apk
+aapt dump badging app/build/outputs/apk/debug/app-debug.apk | grep -E "^package|launchable-activity"
+```
+
+期望：`Verified`、对齐通过、`package: name='dev.appinspector'
+versionCode='1' versionName='1.0'`、`launchable-activity: ...MainActivity`。
+
+---
+
+## 方式二：手工构建（不依赖 Gradle）
+
+本方式使用纯命令行工具链手工构建 APK，不需要 Gradle（在某些受限沙箱环境里
 Gradle daemon 的本地 socket 通信会被拦截，此时只能用本流程）。
 
 ## 一、前置要求

@@ -32,6 +32,26 @@ android {
     buildFeatures {
         compose = true
     }
+
+    packaging {
+        resources {
+            // KMP 构件自带的 Kotlin/Native 编译器元数据在多个 jar 中重复，
+            // 且 Android 运行时用不到，直接排除
+            excludes += "**/*.knm"
+            excludes += "commonMain/**"
+            excludes += "nonJvmMain/**"
+            excludes += "META-INF/kotlin-project-structure-metadata.json"
+        }
+    }
+}
+
+// 去重：旧 -ktx 构件的类已全部并入新构件（collection-ktx → collection-jvm、
+// lifecycle-viewmodel-ktx → lifecycle-viewmodel-android），同时保留会导致
+// d8 报 Duplicate class。已验证被排除的类均有新版覆盖（App 未使用的
+// 已废弃 CloseableCoroutineScope 除外）。
+configurations.all {
+    exclude(group = "androidx.collection", module = "collection-ktx")
+    exclude(group = "androidx.lifecycle", module = "lifecycle-viewmodel-ktx")
 }
 
 dependencies {
@@ -52,6 +72,10 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    // Shizuku：免 Root 执行 pm 级操作（disable-user / uninstall --user 0）
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
