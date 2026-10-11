@@ -939,7 +939,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     var showTerminal by mutableStateOf(false)
 
-    data class TerminalLine(val text: String, val isCommand: Boolean, val isError: Boolean = false)
+    data class TerminalLine(
+        val text: String,
+        val isCommand: Boolean,
+        val isError: Boolean = false,
+        /** v6.6: 状态行（✓/✗），statusOk 区分成功/失败 */
+        val isStatus: Boolean = false,
+        val statusOk: Boolean = true,
+    )
 
     var terminalLines by mutableStateOf<List<TerminalLine>>(emptyList())
         private set
@@ -968,6 +975,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     terminalLines = terminalLines + TerminalLine(prompt, isCommand = true)
                 }
                 val res = ShizukuManager.execRaw(ctx, cmd)
+                val ok = res.isSuccess
                 val line = res.fold(
                     onSuccess = { (_, out) ->
                         val o = out.trim()
@@ -978,8 +986,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     },
                 )
                 newLines.add(line)
+                // v6.6: 状态行（批量时带 [n/N] 序号）
+                val tag = if (cmds.size > 1) "[${i + 1}/${cmds.size}]" else ""
+                val statusLine = TerminalLine(
+                    text = if (ok) "执行成功 $tag" else "执行失败 $tag",
+                    isCommand = false,
+                    isStatus = true,
+                    statusOk = ok,
+                )
                 withContext(Dispatchers.Main) {
-                    terminalLines = terminalLines + line
+                    terminalLines = terminalLines + line + statusLine
                 }
             }
             withContext(Dispatchers.Main) {
