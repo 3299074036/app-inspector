@@ -7,11 +7,14 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.appinspector.ui.AppViewModel
 import dev.appinspector.ui.ExtractSettingsScreen
 import dev.appinspector.ui.MainScreen
 import dev.appinspector.ui.theme.AppInspectorTheme
@@ -26,7 +29,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            AppInspectorTheme {
+            // 与 MainScreen 共享 Activity 级 ViewModel，以读取主题设置
+            val vm: AppViewModel = viewModel()
+            val settings by vm.settings.collectAsState()
+            AppInspectorTheme(themeMode = settings.themeMode) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
@@ -34,6 +40,7 @@ class MainActivity : ComponentActivity() {
                     var screen by remember { mutableStateOf<Screen>(Screen.List) }
                     when (screen) {
                         Screen.List -> MainScreen(
+                            vm = vm,
                             onOpenExtractSettings = { screen = Screen.ExtractSettings },
                         )
 

@@ -13,11 +13,11 @@ import java.io.InputStreamReader
 class ShizukuService : IShizukuApi.Stub() {
 
     override fun execPm(args: Array<String>): String {
-        val cmd = arrayOf("pm") + args
+        if (args.isEmpty()) return "Failure: empty command"
         val proc = try {
-            Runtime.getRuntime().exec(cmd)
+            Runtime.getRuntime().exec(args)
         } catch (t: Throwable) {
-            return "Failure: cannot exec pm: ${t.message}"
+            return "Failure: cannot exec ${args[0]}: ${t.message}"
         }
         val out = StringBuilder()
         try {

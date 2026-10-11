@@ -15,10 +15,15 @@ import androidx.lifecycle.viewModelScope
 import android.content.pm.PackageManager
 import dev.appinspector.data.AppEntry
 import dev.appinspector.data.AppFilter
+import dev.appinspector.data.SuggestSubFilter
 import dev.appinspector.data.AppRepository
 import dev.appinspector.data.AppSettings
 import dev.appinspector.data.SettingsStore
 import dev.appinspector.data.SortKey
+import dev.appinspector.data.StorageHelper
+import dev.appinspector.data.StorageSizes
+import dev.appinspector.data.UadDb
+import dev.appinspector.data.UsageStatsHelper
 import dev.appinspector.shizuku.ShizukuManager
 import rikka.shizuku.Shizuku
 import dev.appinspector.export.ALL_EXPORT_FIELDS
@@ -39,6 +44,12 @@ import java.util.Locale
 
 data class ExtractProgress(val done: Int, val total: Int, val name: String)
 
+/** 精简清单条目 */
+data class DebloatItem(val packageName: String, val entry: AppEntry?)
+
+/** 被系统恢复的应用 */
+data class RestoredApp(val packageName: String, val appName: String, val wasDisabled: Boolean)
+
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo = AppRepository(app)
@@ -53,6 +64,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var search by mutableStateOf("")
     var searching by mutableStateOf(false)
     var filter by mutableStateOf(AppFilter.ALL)
+    /** 建议精简页的子筛选（按 UAD 建议等级） */
+    var suggestSubFilter by mutableStateOf(SuggestSubFilter.ALL)
 
     var selectMode by mutableStateOf(false)
     val selected = mutableStateMapOf<String, AppEntry>()
@@ -66,6 +79,69 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var showShizukuDialog by mutableStateOf(false)
     var confirmDeleteEntry by mutableStateOf<AppEntry?>(null)
+    /** 批量删除确认（多选模式 / 精简清单共用） */
+    var confirmBatchDelete by mutableStateOf<List<AppEntry>?>(null)
+
+    // 精简清单导入
+    var showDebloatDialog by mutableStateOf(false)
+    var debloatItems by mutableStateOf<List<DebloatItem>>(emptyList())
+        private set
+
+    // 导出 ADB 脚本
+    var exportScriptRequest by mutableStateOf(false)
+        private set
+
+    // OTA 恢复提醒：被系统恢复的应用（wasDisabled=true 应为停用态，false 应为删除态）
+    var restoredApps by mutableStateOf<List<RestoredApp>>(emptyList())
+        private set
+
+    // 使用统计权限
+    var hasUsagePerm by mutableStateOf(false)
+        private set
+
+    /** 启动时申请使用权限的弹窗（仅当未授权时显示一次） */
+    var showUsagePermRequest by mutableStateOf(false)
+
+    /** 启动时检查：未授权则弹出申请 */
+    fun checkUsagePermOnLaunch() {
+        hasUsagePerm = UsageStatsHelper.hasPermission(getApplication())
+        if (!hasUsagePerm) showUsagePermRequest = true
+    }
+
+    // ---------- 存储占用 ----------
+
+    /** 详情弹窗的存储占用（按需加载） */
+    var storageInfo by mutableStateOf<StorageSizes?>(null)
+        private set
+    var confirmClearData by mutableStateOf<AppEntry?>(null)
+
+    fun loadStorageInfo(pkg: String) {
+        storageInfo = null
+        viewModelScope.launch(Dispatchers.IO) {
+            val info = StorageHelper.querySizes(getApplication(), pkg)
+            withContext(Dispatchers.Main) { storageInfo = info }
+        }
+    }
+
+    fun clearStorageInfo() {
+        storageInfo = null
+    }
+
+    /** 清除应用数据（pm clear --user 0，需 Shizuku），调用前请先经 confirmClearData 确认 */
+    fun clearAppData(entry: AppEntry) {
+        viewModelScope.launch {
+            val res = ShizukuManager.execCommand(
+                getApplication(), "pm", "clear", "--user", "0", entry.packageName
+            )
+            confirmClearData = null
+            res.onSuccess {
+                toastMsg = "已清除 ${entry.appName} 的数据"
+                loadStorageInfo(entry.packageName)
+            }.onFailure {
+                toastMsg = "清除失败：${it.message}"
+            }
+        }
+    }
 
     private val shizukuPermissionListener =
         Shizuku.OnRequestPermissionResultListener { _, grantResult ->
@@ -78,6 +154,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
 
     var progress by mutableStateOf<ExtractProgress?>(null)
+        private set
+    /** 进度弹窗标题（提取/批量停用/批量删除共用） */
+    var progressTitle by mutableStateOf("")
         private set
     var toastMsg by mutableStateOf<String?>(null)
         private set
@@ -109,14 +188,46 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun requestShizukuPermission() = ShizukuManager.requestPermission()
 
     /** 停用/启用应用（需 Shizuku） */
+    /**
+     * 查询包的真实启用状态（用于验证 pm 命令是否真正生效，
+     * ColorOS 对部分包会静默拒绝，命令返回成功但状态不变）。
+     */
+    private fun queryActualEnabled(packageName: String): Boolean {
+        val pm = getApplication<Application>().packageManager
+        return runCatching {
+            val setting = pm.getApplicationEnabledSetting(packageName)
+            val ai = pm.getApplicationInfo(packageName, 0)
+            setting != android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED &&
+                setting != android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER &&
+                setting != android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED &&
+                ai.enabled
+        }.getOrDefault(true)
+    }
+
+    /** 查询包是否真实已删除（pm uninstall --user 0 后验证用） */
+    private fun queryActualUninstalled(packageName: String): Boolean {
+        val pm = getApplication<Application>().packageManager
+        return runCatching {
+            pm.getPackageInfo(packageName, 0)
+            false
+        }.getOrDefault(true)
+    }
+
     fun setAppEnabled(entry: AppEntry, enabled: Boolean) {
         viewModelScope.launch {
             val res = ShizukuManager.setEnabled(getApplication(), entry.packageName, enabled)
             res.onSuccess {
-                toastMsg = if (enabled) "已启用 ${entry.appName}" else "已停用 ${entry.appName}"
-                // 乐观更新详情弹窗，随后 refresh() 会载入真实状态
-                if (detailEntry?.packageName == entry.packageName) {
-                    detailEntry = entry.copy(isEnabled = enabled)
+                // 验证真实状态，ColorOS 可能静默拒绝
+                val actual = queryActualEnabled(entry.packageName)
+                if (actual == enabled) {
+                    toastMsg = if (enabled) "已启用 ${entry.appName}" else "已停用 ${entry.appName}"
+                    if (enabled) store.untrack(entry.packageName)
+                    else store.trackDisabled(entry.packageName)
+                    if (detailEntry?.packageName == entry.packageName) {
+                        detailEntry = entry.copy(isEnabled = enabled)
+                    }
+                } else {
+                    toastMsg = "操作未生效：${entry.appName}（系统拒绝了该操作）"
                 }
                 refresh()
             }.onFailure {
@@ -130,12 +241,152 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val res = ShizukuManager.uninstall(getApplication(), entry.packageName)
             res.onSuccess {
-                toastMsg = "已删除 ${entry.appName}"
-                confirmDeleteEntry = null
-                detailEntry = null
+                // 验证真实状态
+                val actual = queryActualUninstalled(entry.packageName)
+                if (actual) {
+                    toastMsg = "已删除 ${entry.appName}"
+                    store.trackUninstalled(entry.packageName)
+                    confirmDeleteEntry = null
+                    detailEntry = null
+                } else {
+                    toastMsg = "操作未生效：${entry.appName}（系统拒绝了该操作）"
+                    confirmDeleteEntry = null
+                }
                 refresh()
             }.onFailure {
                 toastMsg = "删除失败：${it.message}"
+            }
+        }
+    }
+
+    /** 恢复已删除的系统应用（pm install-existing --user 0，需 Shizuku） */
+    fun restoreApp(entry: AppEntry) {
+        viewModelScope.launch {
+            val res = ShizukuManager.installExisting(getApplication(), entry.packageName)
+            res.onSuccess {
+                toastMsg = "已恢复 ${entry.appName}"
+                store.untrack(entry.packageName)
+                if (detailEntry?.packageName == entry.packageName) {
+                    detailEntry = null
+                }
+                refresh()
+            }.onFailure {
+                toastMsg = "恢复失败：${it.message}"
+            }
+        }
+    }
+
+    /** 批量恢复已删除的系统应用（需 Shizuku） */
+    fun batchRestore(entries: List<AppEntry>) {
+        if (entries.isEmpty()) return
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            progressTitle = "正在批量恢复"
+            progress = ExtractProgress(0, entries.size, "")
+            var ok = 0
+            val failed = mutableListOf<String>()
+            for ((i, e) in entries.withIndex()) {
+                progress = ExtractProgress(i, entries.size, e.appName)
+                val res = ShizukuManager.installExisting(ctx, e.packageName)
+                if (res.isSuccess) {
+                    ok++
+                    store.untrack(e.packageName)
+                } else {
+                    failed.add(e.appName)
+                }
+            }
+            progress = ExtractProgress(entries.size, entries.size, "")
+            progress = null
+            exitSelectMode()
+            refresh()
+            toastMsg = buildString {
+                append("批量恢复完成：成功 $ok 个")
+                if (failed.isNotEmpty()) {
+                    append("，失败 ${failed.size} 个（")
+                    append(failed.take(3).joinToString("、"))
+                    if (failed.size > 3) append("…")
+                    append("）")
+                }
+            }
+        }
+    }
+
+    /**
+     * 批量停用/启用（需 Shizuku）。逐个执行并显示进度，
+     * 成功后记录追踪（用于 OTA 恢复提醒）。
+     */
+    fun batchSetEnabled(entries: List<AppEntry>, enabled: Boolean) {
+        if (entries.isEmpty()) return
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            progressTitle = if (enabled) "正在批量启用" else "正在批量停用"
+            progress = ExtractProgress(0, entries.size, "")
+            var ok = 0
+            val failed = mutableListOf<String>()
+            for ((i, e) in entries.withIndex()) {
+                progress = ExtractProgress(i, entries.size, e.appName)
+                val res = ShizukuManager.setEnabled(ctx, e.packageName, enabled)
+                // 验证真实状态（ColorOS 可能静默拒绝）
+                if (res.isSuccess && queryActualEnabled(e.packageName) == enabled) {
+                    ok++
+                    if (enabled) store.untrack(e.packageName)
+                    else store.trackDisabled(e.packageName)
+                } else {
+                    failed.add(e.appName)
+                }
+            }
+            progress = ExtractProgress(entries.size, entries.size, "")
+            progress = null
+            exitSelectMode()
+            debloatItems = emptyList()
+            refresh()
+            toastMsg = buildString {
+                append(if (enabled) "批量启用完成" else "批量停用完成")
+                append("：成功 $ok 个")
+                if (failed.isNotEmpty()) {
+                    append("，未生效 ${failed.size} 个（")
+                    append(failed.take(3).joinToString("、"))
+                    if (failed.size > 3) append("…")
+                    append("，系统拒绝）")
+                }
+            }
+        }
+    }
+
+    /** 批量删除（需 Shizuku），调用前请先经 confirmBatchDelete 确认 */
+    fun batchUninstall(entries: List<AppEntry>) {
+        if (entries.isEmpty()) return
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            progressTitle = "正在批量删除"
+            progress = ExtractProgress(0, entries.size, "")
+            var ok = 0
+            val failed = mutableListOf<String>()
+            for ((i, e) in entries.withIndex()) {
+                progress = ExtractProgress(i, entries.size, e.appName)
+                val res = ShizukuManager.uninstall(ctx, e.packageName)
+                // 验证真实状态
+                if (res.isSuccess && queryActualUninstalled(e.packageName)) {
+                    ok++
+                    store.trackUninstalled(e.packageName)
+                } else {
+                    failed.add(e.appName)
+                }
+            }
+            progress = ExtractProgress(entries.size, entries.size, "")
+            progress = null
+            confirmBatchDelete = null
+            exitSelectMode()
+            debloatItems = emptyList()
+            refresh()
+            toastMsg = buildString {
+                append("批量删除完成：成功 $ok 个")
+                if (failed.isNotEmpty()) {
+                    append("，未生效 ${failed.size} 个（")
+                    append(failed.take(3).joinToString("、"))
+                    if (failed.size > 3) append("…")
+                    append("，系统拒绝）")
+                }
             }
         }
     }
@@ -144,7 +395,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             loading = true
             try {
-                allApps = repo.loadApps()
+                val ctx = getApplication<Application>()
+                var apps = repo.loadApps()
+                // 使用统计：有权限才查，一次查全量后填入
+                hasUsagePerm = UsageStatsHelper.hasPermission(ctx)
+                if (hasUsagePerm) {
+                    val usage = withContext(Dispatchers.IO) { UsageStatsHelper.queryLastUsed(ctx) }
+                    if (usage.isNotEmpty()) {
+                        apps = apps.map { it.copy(lastUsed = usage[it.packageName]) }
+                    }
+                }
+                allApps = apps
+                checkRestored(apps)
+                // 后台加载 UAD 建议包集合（用于"建议精简"Tab）
+                launch(Dispatchers.IO) {
+                    val pkgs = runCatching {
+                        UadDb.get(ctx).keys
+                    }.getOrDefault(emptySet())
+                    suggestPkgs = pkgs
+                }
             } catch (t: Throwable) {
                 toastMsg = "加载失败：${t.message}"
             }
@@ -152,16 +421,119 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * OTA 恢复检测：对比用户经本应用停用/删除过的包，
+     * 若被系统恢复（重新启用 / 重新安装），加入提醒列表。
+     */
+    private fun checkRestored(apps: List<AppEntry>) {
+        val byPkg = apps.associateBy { it.packageName }
+        val restored = mutableListOf<RestoredApp>()
+        for (pkg in store.getTrackedDisabled()) {
+            val e = byPkg[pkg]
+            if (e != null && e.isEnabled && !e.isUninstalled) {
+                restored.add(RestoredApp(pkg, e.appName, wasDisabled = true))
+            }
+        }
+        for (pkg in store.getTrackedUninstalled()) {
+            val e = byPkg[pkg]
+            if (e != null && !e.isUninstalled) {
+                restored.add(RestoredApp(pkg, e.appName, wasDisabled = false))
+            }
+        }
+        restoredApps = restored
+    }
+
+    /** 重新执行被恢复的操作（验证真实状态，如实报告） */
+    fun reapplyRestored() {
+        val list = restoredApps
+        if (list.isEmpty()) return
+        val byPkg = allApps.associateBy { it.packageName }
+        val toDisable = list.filter { it.wasDisabled }.mapNotNull { byPkg[it.packageName] }
+        val toDelete = list.filter { !it.wasDisabled }.mapNotNull { byPkg[it.packageName] }
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            val failed = mutableListOf<String>()
+            var ok = 0
+            if (toDisable.isNotEmpty()) {
+                progressTitle = "正在重新停用"
+                progress = ExtractProgress(0, toDisable.size, "")
+                for ((i, e) in toDisable.withIndex()) {
+                    progress = ExtractProgress(i, toDisable.size, e.appName)
+                    val res = ShizukuManager.setEnabled(ctx, e.packageName, false)
+                    // 验证真实状态
+                    if (res.isSuccess && !queryActualEnabled(e.packageName)) {
+                        ok++
+                    } else {
+                        failed.add(e.appName)
+                    }
+                }
+                progress = null
+            }
+            if (toDelete.isNotEmpty()) {
+                progressTitle = "正在重新删除"
+                progress = ExtractProgress(0, toDelete.size, "")
+                for ((i, e) in toDelete.withIndex()) {
+                    progress = ExtractProgress(i, toDelete.size, e.appName)
+                    val res = ShizukuManager.uninstall(ctx, e.packageName)
+                    if (res.isSuccess && queryActualUninstalled(e.packageName)) {
+                        ok++
+                    } else {
+                        failed.add(e.appName)
+                    }
+                }
+                progress = null
+            }
+            refresh()
+            toastMsg = buildString {
+                append("重新执行完成：成功 $ok 个")
+                if (failed.isNotEmpty()) {
+                    append("，未生效 ${failed.size} 个（")
+                    append(failed.take(3).joinToString("、"))
+                    if (failed.size > 3) append("…")
+                    append("，系统拒绝了这些操作）")
+                }
+            }
+        }
+    }
+
+    /** 忽略恢复提醒：取消对这些包的追踪 */
+    fun ignoreRestored() {
+        store.untrackAll(restoredApps.map { it.packageName })
+        restoredApps = emptyList()
+    }
+
     /** 全部已安装应用数量（导出范围用） */
     fun totalCount(): Int = allApps.size
+    fun disabledCount(): Int = allApps.count { !it.isEnabled && !it.isUninstalled }
+    fun deletedCount(): Int = allApps.count { it.isUninstalled }
 
-    /** 当前筛选 + 搜索 + 排序后的列表 */
-    fun currentList(): List<AppEntry> {
+    /** 各 Tab 的应用个数（受"显示系统应用"影响，不受搜索影响） */
+    fun countFor(f: AppFilter): Int {
         val s = settings.value
         var list = allApps
         if (!s.showSystem) list = list.filter { !it.isSystem }
-        if (filter == AppFilter.DISABLED) list = list.filter { !it.isEnabled && !it.isUninstalled }
-        if (filter == AppFilter.DELETED) list = list.filter { it.isUninstalled }
+        return when (f) {
+            AppFilter.ALL -> list.size
+            AppFilter.DISABLED -> list.count { !it.isEnabled && !it.isUninstalled }
+            AppFilter.DELETED -> list.count { it.isUninstalled }
+            AppFilter.SUGGEST -> list.count { it.packageName in suggestPkgs }
+        }
+    }
+
+    /** 当前筛选 + 搜索 + 排序后的列表 */
+    /** 有 UAD 社区建议的包名集合（后台加载） */
+    var suggestPkgs by mutableStateOf<Set<String>>(emptySet())
+        private set
+
+    fun currentList(): List<AppEntry> = listFor(filter)
+
+    fun listFor(f: AppFilter): List<AppEntry> {
+        val s = settings.value
+        var list = allApps
+        if (!s.showSystem) list = list.filter { !it.isSystem }
+        if (f == AppFilter.DISABLED) list = list.filter { !it.isEnabled && !it.isUninstalled }
+        if (f == AppFilter.DELETED) list = list.filter { it.isUninstalled }
+        if (f == AppFilter.SUGGEST) list = list.filter { it.packageName in suggestPkgs }
         val q = search.trim()
         if (q.isNotEmpty()) {
             list = list.filter {
@@ -176,12 +548,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             SortKey.PKG -> compareBy { it.packageName }
             SortKey.INSTALLED -> compareBy { it.firstInstallTime }
             SortKey.UPDATED -> compareBy { it.lastUpdateTime }
+            // null（未知）排最后；0（从未打开）按最久处理
+            SortKey.LAST_USED -> compareBy { it.lastUsed ?: Long.MAX_VALUE }
         }
         return list.sortedWith(if (s.sortAsc) comp else comp.reversed())
     }
 
     fun setShowSystem(v: Boolean) =
         updateSetting { putBoolean(SettingsStore.Keys.SHOW_SYSTEM, v) }
+
+    var showThemeDialog by mutableStateOf(false)
+
+    fun setThemeMode(mode: String) =
+        updateSetting { putString(SettingsStore.Keys.THEME_MODE, mode) }
+
+    fun themeModeTitle(mode: String): String = when (mode) {
+        "light" -> "浅色"
+        "dark" -> "深色"
+        else -> "跟随系统"
+    }
 
     fun setSort(key: SortKey, asc: Boolean) = updateSetting {
         putString(SettingsStore.Keys.SORT_KEY, key.name)
@@ -252,6 +637,166 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return "应用列表_$ts.${exportFormat.ext}"
     }
 
+    // ---------- 精简清单导入 ----------
+
+    /** 解析粘贴的包名清单（每行一个，# 开头为注释），匹配本地应用 */
+    fun parseDebloatList(text: String) {
+        val pkgs = text.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") }
+            .distinct()
+            .toList()
+        if (pkgs.isEmpty()) {
+            toastMsg = "未解析到有效包名"
+            return
+        }
+        val byPkg = allApps.associateBy { it.packageName }
+        debloatItems = pkgs.map { DebloatItem(it, byPkg[it]) }
+    }
+
+    fun clearDebloatList() {
+        debloatItems = emptyList()
+    }
+
+    // ---------- 导出 ADB 脚本 ----------
+
+    fun requestExportScript() {
+        exportScriptRequest = true
+    }
+
+    fun consumeExportScriptRequest(): Boolean {
+        val r = exportScriptRequest
+        exportScriptRequest = false
+        return r
+    }
+
+    fun exportScriptFileName(): String {
+        val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        return "debloat_$ts.sh"
+    }
+
+    /**
+     * 导出精简脚本：已停用 -> pm disable-user，已删除 -> pm uninstall。
+     * 生成的裸 pm 命令可直接 `adb shell < xxx.sh` 执行，
+     * 也可在手机本地 shell（LADB / aShell）中逐行执行。
+     */
+    fun doExportScript(context: Context, uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val disabled = allApps.filter { !it.isEnabled && !it.isUninstalled }
+                    .sortedBy { it.packageName }
+                val uninstalled = allApps.filter { it.isUninstalled }
+                    .sortedBy { it.packageName }
+                if (disabled.isEmpty() && uninstalled.isEmpty()) {
+                    withContext(Dispatchers.Main) { toastMsg = "没有已停用/已删除的应用可导出" }
+                    return@launch
+                }
+                val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+                val sb = StringBuilder()
+                sb.appendLine("#!/bin/sh")
+                sb.appendLine("# 应用检查器导出的精简脚本")
+                sb.appendLine("# 生成时间：$ts")
+                sb.appendLine("#")
+                sb.appendLine("# 用法：")
+                sb.appendLine("#   电脑：adb shell < ${exportScriptFileName()}")
+                sb.appendLine("#   手机：LADB / aShell 中逐行执行，或 sh ${exportScriptFileName()}")
+                sb.appendLine()
+                if (disabled.isNotEmpty()) {
+                    sb.appendLine("# ---------- 停用（${disabled.size} 个） ----------")
+                    for (e in disabled) {
+                        sb.appendLine("# ${e.appName}")
+                        sb.appendLine("pm disable-user --user 0 ${e.packageName}")
+                    }
+                    sb.appendLine()
+                }
+                if (uninstalled.isNotEmpty()) {
+                    sb.appendLine("# ---------- 删除（${uninstalled.size} 个） ----------")
+                    for (e in uninstalled) {
+                        sb.appendLine("# ${e.appName}")
+                        sb.appendLine("pm uninstall --user 0 ${e.packageName}")
+                    }
+                }
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(sb.toString().toByteArray(Charsets.UTF_8))
+                } ?: throw IllegalStateException("无法打开输出流")
+                withContext(Dispatchers.Main) {
+                    toastMsg = "已导出脚本：停用 ${disabled.size} 个，删除 ${uninstalled.size} 个"
+                }
+            } catch (t: Throwable) {
+                withContext(Dispatchers.Main) { toastMsg = "导出失败：${t.message}" }
+            }
+        }
+    }
+
+    // ---------- Shizuku 命令终端 ----------
+
+    var showTerminal by mutableStateOf(false)
+
+    data class TerminalLine(val text: String, val isCommand: Boolean, val isError: Boolean = false)
+
+    var terminalLines by mutableStateOf<List<TerminalLine>>(emptyList())
+        private set
+    var terminalRunning by mutableStateOf(false)
+        private set
+
+    fun clearTerminal() {
+        terminalLines = emptyList()
+    }
+
+    /**
+     * 执行终端命令。支持用 `;` 分隔多条命令批量执行（逐条顺序执行）；
+     * 仍不支持管道 `|` 与重定向 `>`（shell 身份限制）。
+     */
+    fun execTerminalCommand(command: String) {
+        val cmds = command.split(";").map { it.trim() }.filter { it.isNotEmpty() }
+        if (cmds.isEmpty() || terminalRunning) return
+        terminalRunning = true
+        viewModelScope.launch(Dispatchers.IO) {
+            val ctx = getApplication<Application>()
+            val newLines = mutableListOf<TerminalLine>()
+            for ((i, cmd) in cmds.withIndex()) {
+                // 多条时标注序号
+                val prompt = if (cmds.size > 1) "$ [${i + 1}/${cmds.size}] $cmd" else "$ $cmd"
+                withContext(Dispatchers.Main) {
+                    terminalLines = terminalLines + TerminalLine(prompt, isCommand = true)
+                }
+                val res = ShizukuManager.execRaw(ctx, cmd)
+                val line = res.fold(
+                    onSuccess = { (_, out) ->
+                        val o = out.trim()
+                        TerminalLine(if (o.isEmpty()) "Success" else o, isCommand = false)
+                    },
+                    onFailure = {
+                        TerminalLine("错误：${it.message}", isCommand = false, isError = true)
+                    },
+                )
+                newLines.add(line)
+                withContext(Dispatchers.Main) {
+                    terminalLines = terminalLines + line
+                }
+            }
+            withContext(Dispatchers.Main) {
+                terminalRunning = false
+                // 批量执行完刷新列表（pm 操作可能改变应用状态）
+                if (cmds.size > 1) refresh()
+            }
+        }
+    }
+
+    // ---------- 使用情况访问权限 ----------
+
+    fun openUsageAccessSettings(context: Context) {
+        val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(intent) }
+            .onFailure { toastMsg = "无法打开设置页" }
+    }
+
+    fun refreshUsagePerm() {
+        hasUsagePerm = UsageStatsHelper.hasPermission(getApplication())
+        if (hasUsagePerm) refresh()
+    }
+
     /** 提取安装包 */
     fun requestExtract(entries: List<AppEntry>) {
         if (entries.isEmpty()) {
@@ -299,6 +844,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         viewModelScope.launch {
+            progressTitle = "正在提取安装包"
             progress = ExtractProgress(0, entries.size, "")
             val res = extractApks(
                 ctx,

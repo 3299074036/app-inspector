@@ -123,6 +123,15 @@ object ShizukuManager {
     private suspend fun execPm(
         context: Context,
         vararg args: String,
+    ): Result<String> = execCommand(context, *arrayOf("pm") + args)
+
+    /**
+     * 以 shell 身份执行任意命令（终端用）。
+     * 注意：仅检查进程退出码，不解析输出中的 Failure。
+     */
+    suspend fun execCommand(
+        context: Context,
+        vararg args: String,
     ): Result<String> = withContext(Dispatchers.IO) {
         val service = ensureBound(context)
             ?: return@withContext Result.failure(
@@ -130,11 +139,42 @@ object ShizukuManager {
             )
         try {
             val output = service.execPm(args)
-            if (output.contains("Failure", ignoreCase = true)) {
-                Result.failure(IllegalStateException(output.lineSequence().firstOrNull() ?: output))
+            val firstLine = output.lineSequence().firstOrNull() ?: ""
+            // pm 报错形式多样：Failure [...] / Error: ... / Exception ...
+            if (output.contains("Failure", ignoreCase = true) ||
+                firstLine.startsWith("Error", ignoreCase = true) ||
+                firstLine.contains("Exception", ignoreCase = true)
+            ) {
+                Result.failure(IllegalStateException(firstLine.ifBlank { output }.take(200)))
             } else {
                 Result.success(output.ifBlank { "Success" })
             }
+        } catch (t: Exception) {
+            api = null
+            Result.failure(t)
+        }
+    }
+
+    /**
+     * 终端专用：执行任意 shell 命令行（按空格分词，不支持管道/重定向），
+     * 返回原始输出，不做 Failure 判断。
+     */
+    suspend fun execRaw(
+        context: Context,
+        command: String,
+    ): Result<Pair<Int, String>> = withContext(Dispatchers.IO) {
+        val service = ensureBound(context)
+            ?: return@withContext Result.failure(
+                IllegalStateException("Shizuku 服务连接失败")
+            )
+        try {
+            // 简单分词（不支持引号嵌套，终端场景够用）
+            val args = command.trim().split(Regex("\\s+")).toTypedArray()
+            if (args.isEmpty() || args[0].isEmpty()) {
+                return@withContext Result.failure(IllegalArgumentException("空命令"))
+            }
+            val output = service.execPm(args)
+            Result.success(0 to output.ifBlank { "(无输出)" })
         } catch (t: Exception) {
             api = null
             Result.failure(t)
@@ -162,4 +202,14 @@ object ShizukuManager {
         context: Context,
         packageName: String,
     ): Result<String> = execPm(context, "uninstall", "--user", "0", packageName)
+
+    /**
+     * 恢复已删除的系统应用，对应 `pm install-existing --user 0`。
+     * 仅对系统应用有效（APK 保留在系统分区）；用户应用删除后无法恢复。
+     */
+    suspend fun installExisting(
+        context: Context,
+        packageName: String,
+    ): Result<String> = execPm(context, "install-existing", "--user", "0", packageName)
+
 }

@@ -19,6 +19,8 @@ data class AppSettings(
     /** 命名表达式，如 {A}_{V}.apk */
     val namingExpr: String = "{A}_{V}.apk",
     val includeSplits: Boolean = true,
+    /** 主题：system=跟随系统，light=浅色，dark=深色 */
+    val themeMode: String = "system",
 )
 
 /**
@@ -36,6 +38,11 @@ class SettingsStore(context: Context) {
         const val EXTRACT_PATH_LABEL = "extract_path_label"
         const val NAMING_EXPR = "naming_expr"
         const val INCLUDE_SPLITS = "include_splits"
+        const val THEME_MODE = "theme_mode"
+        /** 用户经本应用停用过的包（用于 OTA 后恢复提醒） */
+        const val TRACKED_DISABLED = "tracked_disabled"
+        /** 用户经本应用删除过的包（用于 OTA 后恢复提醒） */
+        const val TRACKED_UNINSTALLED = "tracked_uninstalled"
     }
 
     private val prefs: SharedPreferences = context.applicationContext
@@ -59,10 +66,51 @@ class SettingsStore(context: Context) {
         extractPathLabel = prefs.getString(Keys.EXTRACT_PATH_LABEL, "") ?: "",
         namingExpr = prefs.getString(Keys.NAMING_EXPR, "{A}_{V}.apk") ?: "{A}_{V}.apk",
         includeSplits = prefs.getBoolean(Keys.INCLUDE_SPLITS, true),
+        themeMode = prefs.getString(Keys.THEME_MODE, "system") ?: "system",
     )
 
     fun update(transform: SharedPreferences.Editor.() -> Unit) {
         prefs.edit().apply(transform).apply()
         _settings.value = read()
+    }
+
+    // ---------- 用户操作追踪（OTA 恢复提醒用，不经过 StateFlow） ----------
+
+    fun getTrackedDisabled(): Set<String> =
+        prefs.getStringSet(Keys.TRACKED_DISABLED, emptySet()) ?: emptySet()
+
+    fun getTrackedUninstalled(): Set<String> =
+        prefs.getStringSet(Keys.TRACKED_UNINSTALLED, emptySet()) ?: emptySet()
+
+    /** 记录用户停用；若曾记录为删除则移出删除集合 */
+    fun trackDisabled(pkg: String) {
+        prefs.edit()
+            .putStringSet(Keys.TRACKED_DISABLED, getTrackedDisabled() + pkg)
+            .putStringSet(Keys.TRACKED_UNINSTALLED, getTrackedUninstalled() - pkg)
+            .apply()
+    }
+
+    /** 记录用户删除；若曾记录为停用则移出停用集合 */
+    fun trackUninstalled(pkg: String) {
+        prefs.edit()
+            .putStringSet(Keys.TRACKED_UNINSTALLED, getTrackedUninstalled() + pkg)
+            .putStringSet(Keys.TRACKED_DISABLED, getTrackedDisabled() - pkg)
+            .apply()
+    }
+
+    /** 用户手动恢复启用：取消追踪 */
+    fun untrack(pkg: String) {
+        prefs.edit()
+            .putStringSet(Keys.TRACKED_DISABLED, getTrackedDisabled() - pkg)
+            .putStringSet(Keys.TRACKED_UNINSTALLED, getTrackedUninstalled() - pkg)
+            .apply()
+    }
+
+    fun untrackAll(pkgs: Collection<String>) {
+        if (pkgs.isEmpty()) return
+        prefs.edit()
+            .putStringSet(Keys.TRACKED_DISABLED, getTrackedDisabled() - pkgs.toSet())
+            .putStringSet(Keys.TRACKED_UNINSTALLED, getTrackedUninstalled() - pkgs.toSet())
+            .apply()
     }
 }

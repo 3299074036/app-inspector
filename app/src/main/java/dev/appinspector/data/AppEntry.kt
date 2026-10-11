@@ -20,6 +20,8 @@ data class AppEntry(
     val sourceDir: String?,
     val splitSourceDirs: List<String>,
     val applicationInfo: ApplicationInfo,
+    /** 最近一次打开的时间戳（毫秒）；null=未知（未授权），0=一年内从未打开 */
+    val lastUsed: Long? = null,
 )
 
 /** 排序维度 */
@@ -29,6 +31,7 @@ enum class SortKey(val title: String) {
     PKG("按应用包名"),
     INSTALLED("按首次安装时间"),
     UPDATED("按最后更新时间"),
+    LAST_USED("按最近使用时间"),
 }
 
 /** 列表筛选 */
@@ -36,4 +39,14 @@ enum class AppFilter(val title: String) {
     ALL("全部"),
     DISABLED("已停用"),
     DELETED("已删除"),
+    SUGGEST("建议精简"),
+}
+
+/** 建议精简页的子筛选（按 UAD 建议等级，与徽标标签一致） */
+enum class SuggestSubFilter(val title: String) {
+    ALL("全部"),
+    DELETABLE("可删除"),       // Recommended：卸载无影响
+    CAREFUL("谨慎删除"),       // Advanced：可能影响部分功能
+    NOT_RECOMMENDED("不建议删除"), // Expert：可能导致系统异常
+    DO_NOT("请勿删除"),        // Unsafe：会导致系统故障
 }

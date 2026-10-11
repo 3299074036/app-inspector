@@ -6,11 +6,14 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,6 +24,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
@@ -29,26 +35,35 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Sort
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.PlaylistAddCheck
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Switch
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -57,11 +72,14 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -73,19 +91,37 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
 import dev.appinspector.data.AppEntry
 import dev.appinspector.data.AppFilter
+import dev.appinspector.data.SuggestSubFilter
 import dev.appinspector.data.AppIcon
 import dev.appinspector.data.SortKey
+import dev.appinspector.data.StorageHelper
+import dev.appinspector.data.UadDb
+import dev.appinspector.data.UsageStatsHelper
 import dev.appinspector.shizuku.ShizukuManager
 import dev.appinspector.export.ALL_EXPORT_FIELDS
 import dev.appinspector.export.ExportFormat
 import dev.appinspector.export.formatDate
 import dev.appinspector.export.formatSize
+
+/** 底部导航 Tab */
+private enum class MainTab(val title: String) {
+    APPS("应用"),
+    LISTS("清单"),
+    SETTINGS("设置"),
+}
+
+private val DIALOG_SHAPE = RoundedCornerShape(28.dp)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -100,6 +136,14 @@ fun MainScreen(
         ActivityResultContracts.CreateDocument("*/*")
     ) { uri: Uri? ->
         if (uri != null) vm.doExport(context, uri)
+    }
+    val scriptLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/x-sh")
+    ) { uri: Uri? ->
+        if (uri != null) vm.doExportScript(context, uri)
+    }
+    LaunchedEffect(vm.exportScriptRequest) {
+        if (vm.consumeExportScriptRequest()) scriptLauncher.launch(vm.exportScriptFileName())
     }
     val dirLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -117,200 +161,302 @@ fun MainScreen(
     LaunchedEffect(vm.toastMsg) {
         vm.consumeToast()?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
     }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                vm.refreshUsagePerm()
+                vm.refreshShizukuStatus()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
-    var menuOpen by remember { mutableStateOf(false) }
+    var tab by remember { mutableStateOf(MainTab.APPS) }
 
-    Scaffold(
-        topBar = {
-            if (vm.selectMode) {
-                TopAppBar(
-                    title = { Text("已选 ${vm.selected.size} 项") },
-                    navigationIcon = {
-                        IconButton(onClick = { vm.exitSelectMode() }) {
-                            Icon(Icons.Filled.Close, contentDescription = "取消多选")
-                        }
-                    },
-                )
-            } else {
-                TopAppBar(
-                    title = { Text("应用检查器") },
-                    actions = {
-                        IconButton(onClick = {
-                            vm.searching = !vm.searching
-                            if (!vm.searching) vm.search = ""
-                        }) {
-                            Icon(Icons.Filled.Search, contentDescription = "搜索")
-                        }
-                        IconButton(onClick = { vm.refresh() }) {
-                            Icon(Icons.Filled.Refresh, contentDescription = "刷新")
-                        }
-                        IconButton(onClick = { menuOpen = true }) {
-                            Icon(Icons.Filled.MoreVert, contentDescription = "更多")
-                        }
-                        DropdownMenu(
-                            expanded = menuOpen,
-                            onDismissRequest = { menuOpen = false },
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("显示系统应用") },
-                                trailingIcon = {
+    // 启动时检查使用权限，未授权则弹窗申请
+    LaunchedEffect(Unit) {
+        vm.checkUsagePermOnLaunch()
+    }
+
+    // 终端全屏页
+    if (vm.showTerminal) {
+        TerminalScreen(vm = vm, onBack = { vm.showTerminal = false })
+    } else {
+        Scaffold(
+            topBar = {
+                if (vm.selectMode) {
+                    TopAppBar(
+                        title = { Text("已选 ${vm.selected.size} 项") },
+                        navigationIcon = {
+                            IconButton(onClick = { vm.exitSelectMode() }) {
+                                Icon(Icons.Filled.Close, contentDescription = "取消多选")
+                            }
+                        },
+                    )
+                } else {
+                    TopAppBar(
+                        title = {
+                            Text(
+                                when (tab) {
+                                    MainTab.APPS -> "应用检查器"
+                                    MainTab.LISTS -> "精简清单"
+                                    MainTab.SETTINGS -> "设置"
+                                }
+                            )
+                        },
+                        actions = {
+                            if (tab == MainTab.APPS) {
+                                // 显示系统应用开关（紧凑版，放在刷新按钮左侧）
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(end = 2.dp),
+                                ) {
+                                    Text(
+                                        "显示系统应用",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Spacer(Modifier.width(2.dp))
                                     Switch(
                                         checked = settings.showSystem,
-                                        onCheckedChange = {
-                                            vm.setShowSystem(it)
-                                            menuOpen = false
-                                        },
+                                        onCheckedChange = { vm.setShowSystem(it) },
                                     )
-                                },
-                                onClick = {
-                                    vm.setShowSystem(!settings.showSystem)
-                                    menuOpen = false
-                                },
-                            )
-                            HorizontalDivider()
-                            DropdownMenuItem(
-                                text = { Text("Shizuku（停用/删除）") },
-                                trailingIcon = {
-                                    ShizukuDot(vm.shizukuStatus)
-                                },
-                                onClick = {
-                                    menuOpen = false
-                                    vm.refreshShizukuStatus()
-                                    vm.showShizukuDialog = true
-                                },
-                            )
-                            HorizontalDivider()
-                            DropdownMenuItem(
-                                text = { Text("排序") },
-                                onClick = { menuOpen = false; vm.showSort = true },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("导出列表") },
-                                onClick = { menuOpen = false; vm.showExport = true },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("批量提取安装包") },
-                                onClick = { menuOpen = false; vm.enterSelectMode() },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("提取设置") },
-                                onClick = { menuOpen = false; onOpenExtractSettings() },
-                            )
-                        }
-                    },
-                )
-            }
-        },
-        bottomBar = {
-            if (vm.selectMode) {
-                BottomAppBar {
-                    Text(
-                        "已选 ${vm.selected.size} 项",
-                        modifier = Modifier.padding(horizontal = 16.dp),
+                                }
+                                IconButton(onClick = { vm.refresh() }) {
+                                    Icon(Icons.Filled.Refresh, contentDescription = "刷新")
+                                }
+                            }
+                        },
                     )
-                    Spacer(Modifier.weight(1f))
-                    TextButton(
-                        onClick = { vm.exitSelectMode() },
-                        enabled = vm.progress == null,
-                    ) { Text("取消") }
-                    Spacer(Modifier.width(8.dp))
-                    Button(
-                        onClick = { vm.requestExtract(vm.selected.values.toList()) },
-                        enabled = vm.selected.isNotEmpty() && vm.progress == null,
-                    ) { Text("提取安装包") }
                 }
-            }
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .padding(padding)
-                .fillMaxSize(),
-        ) {
-            if (vm.searching && !vm.selectMode) {
-                OutlinedTextField(
-                    value = vm.search,
-                    onValueChange = { vm.search = it },
-                    placeholder = { Text("搜索应用名称 / 包名") },
-                    singleLine = true,
-                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                    trailingIcon = {
-                        if (vm.search.isNotEmpty()) {
-                            IconButton(onClick = { vm.search = "" }) {
-                                Icon(Icons.Filled.Close, contentDescription = "清空")
+            },
+            bottomBar = {
+                if (vm.selectMode) {
+                    // 悬浮胶囊操作条：根据选中项状态动态显示可用操作
+                    val sel = vm.selected.values.toList()
+                    val toEnable = sel.filter { !it.isEnabled && !it.isUninstalled }
+                    val toDisable = sel.filter { it.isEnabled && !it.isUninstalled }
+                    val toDelete = sel.filter { !it.isUninstalled }
+                    val toRestore = sel.filter { it.isUninstalled && it.isSystem }
+                    val toExtract = sel.filter { !it.isUninstalled }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(28.dp),
+                            color = MaterialTheme.colorScheme.inverseSurface,
+                            shadowElevation = 8.dp,
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                val shizukuReady =
+                                    vm.shizukuStatus == ShizukuManager.Status.Ready
+                                val canBatch =
+                                    vm.selected.isNotEmpty() && vm.progress == null
+                                if (shizukuReady) {
+                                    if (toEnable.isNotEmpty()) {
+                                        TextButton(
+                                            onClick = { vm.batchSetEnabled(toEnable, true) },
+                                            enabled = canBatch,
+                                        ) {
+                                            Text(
+                                                "启用 ${toEnable.size}",
+                                                color = MaterialTheme.colorScheme.inverseOnSurface,
+                                            )
+                                        }
+                                    }
+                                    if (toDisable.isNotEmpty()) {
+                                        TextButton(
+                                            onClick = { vm.batchSetEnabled(toDisable, false) },
+                                            enabled = canBatch,
+                                        ) {
+                                            Text(
+                                                "停用 ${toDisable.size}",
+                                                color = MaterialTheme.colorScheme.inverseOnSurface,
+                                            )
+                                        }
+                                    }
+                                    if (toDelete.isNotEmpty()) {
+                                        TextButton(
+                                            onClick = { vm.confirmBatchDelete = toDelete },
+                                            enabled = canBatch,
+                                        ) {
+                                            Text(
+                                                "删除 ${toDelete.size}",
+                                                color = Color(0xFFFF8A80),
+                                            )
+                                        }
+                                    }
+                                    if (toRestore.isNotEmpty()) {
+                                        TextButton(
+                                            onClick = { vm.batchRestore(toRestore) },
+                                            enabled = canBatch,
+                                        ) {
+                                            Text(
+                                                "恢复 ${toRestore.size}",
+                                                color = MaterialTheme.colorScheme.inverseOnSurface,
+                                            )
+                                        }
+                                    }
+                                }
+                                if (toExtract.isNotEmpty()) {
+                                    TextButton(
+                                        onClick = { vm.requestExtract(toExtract) },
+                                        enabled = canBatch,
+                                    ) {
+                                        Text(
+                                            "提取",
+                                            color = MaterialTheme.colorScheme.inverseOnSurface,
+                                        )
+                                    }
+                                }
                             }
                         }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                )
-            }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                AppFilter.entries.forEach { f ->
-                    FilterChip(
-                        selected = vm.filter == f,
-                        onClick = { vm.filter = f },
-                        label = { Text(f.title) },
-                    )
-                }
-                Spacer(Modifier.weight(1f))
-                val count = vm.currentList().size
-                Text(
-                    "共 $count 个",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            when {
-                vm.loading -> {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
                     }
-                }
-
-                else -> {
-                    val list = vm.currentList()
-                    if (list.isEmpty()) {
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("没有符合条件的应用", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    } else {
-                        LazyColumn(Modifier.fillMaxSize()) {
-                            items(list, key = { it.packageName }) { entry ->
-                                AppRow(
-                                    entry = entry,
-                                    selectMode = vm.selectMode,
-                                    checked = vm.selected.containsKey(entry.packageName),
-                                    onClick = {
-                                        if (vm.selectMode) vm.toggleSelect(entry)
-                                        else vm.detailEntry = entry
-                                    },
-                                    onLongClick = {
-                                        if (!vm.selectMode) vm.enterSelectMode(entry)
-                                    },
-                                    onExtract = { vm.requestExtract(listOf(entry)) },
+                } else {
+                    NavigationBar {
+                        NavigationBarItem(
+                            selected = tab == MainTab.APPS,
+                            onClick = { tab = MainTab.APPS },
+                            icon = {
+                                Icon(
+                                    Icons.Outlined.Apps,
+                                    contentDescription = "应用",
                                 )
-                                HorizontalDivider()
-                            }
-                        }
+                            },
+                            label = { Text("应用") },
+                        )
+                        NavigationBarItem(
+                            selected = tab == MainTab.LISTS,
+                            onClick = { tab = MainTab.LISTS },
+                            icon = {
+                                Icon(
+                                    Icons.Outlined.PlaylistAddCheck,
+                                    contentDescription = "清单",
+                                )
+                            },
+                            label = { Text("清单") },
+                        )
+                        NavigationBarItem(
+                            selected = tab == MainTab.SETTINGS,
+                            onClick = { tab = MainTab.SETTINGS },
+                            icon = {
+                                Icon(
+                                    Icons.Outlined.Settings,
+                                    contentDescription = "设置",
+                                )
+                            },
+                            label = { Text("设置") },
+                        )
                     }
                 }
+            },
+            floatingActionButton = {
+                if (tab == MainTab.APPS && !vm.selectMode) {
+                    FloatingActionButton(
+                        onClick = {
+                            if (vm.shizukuStatus == ShizukuManager.Status.Ready) {
+                                vm.showTerminal = true
+                            } else {
+                                vm.refreshShizukuStatus()
+                                vm.showShizukuDialog = true
+                            }
+                        },
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        shape = RoundedCornerShape(18.dp),
+                    ) {
+                        Icon(Icons.Filled.Terminal, contentDescription = "Shizuku 终端")
+                    }
+                }
+            },
+        ) { padding ->
+            when (tab) {
+                MainTab.APPS -> AppListTab(vm = vm, modifier = Modifier.padding(padding))
+                MainTab.LISTS -> DebloatTab(
+                    vm = vm,
+                    onExportScript = { vm.requestExportScript() },
+                    modifier = Modifier.padding(padding),
+                )
+                MainTab.SETTINGS -> SettingsTab(
+                    vm = vm,
+                    onOpenExtractSettings = onOpenExtractSettings,
+                    modifier = Modifier.padding(padding),
+                )
             }
         }
     }
 
+    // ---------- 弹窗 ----------
+    if (vm.showUsagePermRequest) {
+        AlertDialog(
+            onDismissRequest = { vm.showUsagePermRequest = false },
+            shape = DIALOG_SHAPE,
+            title = { Text("授予使用情况访问权限") },
+            text = {
+                Text(
+                    "用于显示应用的最近使用时间、按使用时间排序，以及查看存储占用。\n\n" +
+                        "点击「去授权」将跳转到系统设置页面，请找到「应用检查器」并允许访问使用情况。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.showUsagePermRequest = false
+                    vm.openUsageAccessSettings(context)
+                }) { Text("去授权") }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.showUsagePermRequest = false }) { Text("暂不") }
+            },
+        )
+    }
     if (vm.showShizukuDialog) {
         ShizukuDialog(vm = vm, onDismiss = { vm.showShizukuDialog = false })
+    }
+    if (vm.showThemeDialog) {
+        val modes = listOf("system", "light", "dark")
+        AlertDialog(
+            onDismissRequest = { vm.showThemeDialog = false },
+            shape = DIALOG_SHAPE,
+            title = { Text("深色模式") },
+            text = {
+                Column {
+                    modes.forEach { mode ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = settings.themeMode == mode,
+                                    onClick = {
+                                        vm.setThemeMode(mode)
+                                        vm.showThemeDialog = false
+                                    },
+                                )
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = settings.themeMode == mode,
+                                onClick = {
+                                    vm.setThemeMode(mode)
+                                    vm.showThemeDialog = false
+                                },
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(vm.themeModeTitle(mode))
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+        )
     }
     if (vm.showSort) {
         SortDialog(vm = vm, onDismiss = { vm.showSort = false })
@@ -323,11 +469,13 @@ fun MainScreen(
         )
     }
     vm.detailEntry?.let { entry ->
-        AppDetailDialog(
+        DetailSheet(
+            vm = vm,
             entry = entry,
             shizukuReady = vm.shizukuStatus == ShizukuManager.Status.Ready,
             onToggleEnabled = { vm.setAppEnabled(entry, !entry.isEnabled) },
             onDelete = { vm.confirmDeleteEntry = entry },
+            onRestore = { vm.restoreApp(entry) },
             onOpenShizuku = { vm.showShizukuDialog = true },
             onExtract = { vm.requestExtract(listOf(entry)); vm.detailEntry = null },
             onOpenSystemSettings = { vm.openAppSettings(context, entry.packageName) },
@@ -338,6 +486,7 @@ fun MainScreen(
     vm.confirmDeleteEntry?.let { entry ->
         AlertDialog(
             onDismissRequest = { vm.confirmDeleteEntry = null },
+            shape = DIALOG_SHAPE,
             title = { Text("删除应用") },
             text = {
                 Text(
@@ -347,9 +496,7 @@ fun MainScreen(
                 )
             },
             confirmButton = {
-                TextButton(
-                    onClick = { vm.uninstallApp(entry) },
-                ) {
+                TextButton(onClick = { vm.uninstallApp(entry) }) {
                     Text("删除", color = MaterialTheme.colorScheme.error)
                 }
             },
@@ -358,10 +505,57 @@ fun MainScreen(
             },
         )
     }
+    vm.confirmClearData?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { vm.confirmClearData = null },
+            shape = DIALOG_SHAPE,
+            title = { Text("清除应用数据") },
+            text = {
+                Text(
+                    "确定要清除「${entry.appName}」的所有数据吗？\n\n" +
+                        "对应命令：pm clear --user 0 ${entry.packageName}\n" +
+                        "这将删除该应用的全部用户数据（含缓存），效果等同恢复出厂设置，不可撤销。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { vm.clearAppData(entry) }) {
+                    Text("清除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.confirmClearData = null }) { Text("取消") }
+            },
+        )
+    }
+    vm.confirmBatchDelete?.let { entries ->
+        AlertDialog(
+            onDismissRequest = { vm.confirmBatchDelete = null },
+            shape = DIALOG_SHAPE,
+            title = { Text("批量删除") },
+            text = {
+                Text(
+                    "确定要删除选中的 ${entries.size} 个应用吗？\n\n" +
+                        entries.take(5).joinToString("\n") { "· ${it.appName}" } +
+                        (if (entries.size > 5) "\n…等 ${entries.size} 个" else "") +
+                        "\n\n对应命令：pm uninstall --user 0 <包名>\n" +
+                        "系统应用的安装包会保留在系统分区，可恢复。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { vm.batchUninstall(entries) }) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.confirmBatchDelete = null }) { Text("取消") }
+            },
+        )
+    }
     vm.progress?.let { p ->
         AlertDialog(
             onDismissRequest = {},
-            title = { Text("正在提取安装包") },
+            shape = DIALOG_SHAPE,
+            title = { Text(vm.progressTitle.ifBlank { "正在处理" }) },
             text = {
                 Column {
                     Text(
@@ -381,84 +575,466 @@ fun MainScreen(
     }
 }
 
+// ================= 应用列表 Tab =================
+
+@Composable
+private fun AppListTab(vm: AppViewModel, modifier: Modifier = Modifier) {
+    val settings by vm.settings.collectAsState()
+    val pagerState = rememberPagerState { AppFilter.entries.size }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    // pager 滑动 -> 更新 filter
+    LaunchedEffect(pagerState.currentPage) {
+        val f = AppFilter.entries[pagerState.currentPage]
+        if (vm.filter != f) vm.filter = f
+    }
+    // filter 变化（点击 Tab） -> 滚动 pager
+    LaunchedEffect(vm.filter) {
+        val idx = AppFilter.entries.indexOf(vm.filter)
+        if (pagerState.currentPage != idx) pagerState.scrollToPage(idx)
+    }
+
+    Column(modifier = modifier.fillMaxSize()) {
+        // 搜索框（填充式无边框）
+        androidx.compose.material3.TextField(
+            value = vm.search,
+            onValueChange = { vm.search = it },
+            placeholder = { Text("搜索应用名称 / 包名") },
+            singleLine = true,
+            shape = RoundedCornerShape(28.dp),
+            colors = androidx.compose.material3.TextFieldDefaults.colors(
+                focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent,
+            ),
+            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+            trailingIcon = {
+                if (vm.search.isNotEmpty()) {
+                    IconButton(onClick = { vm.search = "" }) {
+                        Icon(Icons.Filled.Close, contentDescription = "清空")
+                    }
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+        )
+
+        // 4 个文字 Tab（均匀分布，带个数）
+        FilterTabRow(
+            options = AppFilter.entries.map { it.title },
+            counts = AppFilter.entries.map { vm.countFor(it) },
+            selectedIndex = pagerState.currentPage,
+            onSelect = {
+                scope.launch { pagerState.animateScrollToPage(it) }
+            },
+        )
+
+        // 建议精简页：按 UAD 建议等级子筛选（全部 / 可删除 / 谨慎删除 / 不建议删除 / 请勿删除）
+        if (vm.filter == AppFilter.SUGGEST) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SuggestSubFilter.entries.forEach { sub ->
+                    FilterChip(
+                        selected = vm.suggestSubFilter == sub,
+                        onClick = { vm.suggestSubFilter = sub },
+                        label = { Text(sub.title) },
+                    )
+                }
+            }
+        }
+
+        // OTA 恢复提醒
+        if (vm.restoredApps.isNotEmpty()) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                ),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Text(
+                        "检测到 ${vm.restoredApps.size} 个应用被系统恢复（可能因 OTA 更新）",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val shizukuReady =
+                            vm.shizukuStatus == ShizukuManager.Status.Ready
+                        TextButton(
+                            onClick = {
+                                if (shizukuReady) vm.reapplyRestored()
+                                else vm.showShizukuDialog = true
+                            },
+                        ) { Text("重新执行") }
+                        TextButton(onClick = { vm.ignoreRestored() }) {
+                            Text("忽略")
+                        }
+                    }
+                }
+            }
+        }
+
+        when {
+            vm.loading -> {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
+            else -> {
+                // 左右滑动切换 Tab
+                // key(settings.showSystem)：开关切换时强制重组页面，解决 pager 缓存不刷新
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize(),
+                ) { page ->
+                    val f = AppFilter.entries[page]
+                    androidx.compose.runtime.key(settings.showSystem, f) {
+                        AppListPage(vm = vm, filter = f)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 单页应用列表（pager 内） */
+@Composable
+private fun AppListPage(vm: AppViewModel, filter: AppFilter) {
+    val context = LocalContext.current
+    val baseList = vm.listFor(filter)
+    // 建议精简页叠加子筛选（按 UAD 建议等级）
+    val sub = vm.suggestSubFilter
+    val list = remember(baseList, sub, filter) {
+        if (filter != AppFilter.SUGGEST || sub == SuggestSubFilter.ALL) {
+            baseList
+        } else {
+            baseList.filter { entry ->
+                val removal = UadDb.query(context, entry.packageName)?.removal
+                when (sub) {
+                    SuggestSubFilter.DELETABLE -> removal == "Recommended"
+                    SuggestSubFilter.CAREFUL -> removal == "Advanced"
+                    SuggestSubFilter.NOT_RECOMMENDED -> removal == "Expert"
+                    SuggestSubFilter.DO_NOT -> removal == "Unsafe"
+                    SuggestSubFilter.ALL -> true
+                }
+            }
+        }
+    }
+    if (list.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(
+                when {
+                    filter == AppFilter.SUGGEST && sub != SuggestSubFilter.ALL ->
+                        "「${sub.title}」分类下没有应用"
+                    filter == AppFilter.SUGGEST -> "没有命中社区建议的应用"
+                    else -> "没有符合条件的应用"
+                },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    } else {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp, end = 16.dp, top = 4.dp, bottom = 88.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            // 建议精简页顶部提示：跟随子筛选显示该等级的具体影响
+            if (filter == AppFilter.SUGGEST && !vm.selectMode) {
+                item {
+                    SuggestHint(sub = sub, count = list.size)
+                }
+            }
+            items(list, key = { it.packageName }) { entry ->
+                if (filter == AppFilter.SUGGEST) {
+                    SuggestAppCard(
+                        entry = entry,
+                        selectMode = vm.selectMode,
+                        checked = vm.selected.containsKey(entry.packageName),
+                        onClick = {
+                            if (vm.selectMode) vm.toggleSelect(entry)
+                            else vm.detailEntry = entry
+                        },
+                        onLongClick = {
+                            if (!vm.selectMode) vm.enterSelectMode(entry)
+                        },
+                    )
+                } else {
+                    AppCard(
+                        entry = entry,
+                        selectMode = vm.selectMode,
+                        checked = vm.selected.containsKey(entry.packageName),
+                        onClick = {
+                            if (vm.selectMode) vm.toggleSelect(entry)
+                            else vm.detailEntry = entry
+                        },
+                        onLongClick = {
+                            if (!vm.selectMode) vm.enterSelectMode(entry)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 卡片化应用行 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AppRow(
+private fun AppCard(
     entry: AppEntry,
     selectMode: Boolean,
     checked: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    onExtract: () -> Unit,
 ) {
-    ListItem(
-        headlineContent = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (checked) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+        border = if (checked) androidx.compose.foundation.BorderStroke(
+            2.dp, MaterialTheme.colorScheme.primary
+        ) else null,
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (selectMode) {
+                Checkbox(
+                    checked = checked,
+                    onCheckedChange = null,
+                    modifier = Modifier.padding(end = 4.dp),
+                )
+            }
+            AppIcon(entry, modifier = Modifier.size(46.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
                 Text(
                     entry.appName,
+                    style = MaterialTheme.typography.titleSmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                if (entry.isSystem) {
-                    Spacer(Modifier.width(6.dp))
-                    TinyBadge(
-                        "系统",
-                        MaterialTheme.colorScheme.secondaryContainer,
-                        MaterialTheme.colorScheme.onSecondaryContainer,
-                    )
-                }
-                if (!entry.isEnabled) {
-                    Spacer(Modifier.width(6.dp))
-                    TinyBadge(
-                        "已停用",
-                        MaterialTheme.colorScheme.errorContainer,
-                        MaterialTheme.colorScheme.onErrorContainer,
-                    )
-                }
-                if (entry.isUninstalled) {
-                    Spacer(Modifier.width(6.dp))
-                    TinyBadge(
-                        "已删除",
-                        MaterialTheme.colorScheme.tertiaryContainer,
-                        MaterialTheme.colorScheme.onTertiaryContainer,
-                    )
-                }
-            }
-        },
-        supportingContent = {
-            Column {
-                Text(
-                    "${entry.packageName} · ${entry.versionName ?: "?"}(${entry.versionCode})",
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    "${formatSize(entry.apkSize)} · 更新 ${formatDate(entry.lastUpdateTime)}",
+                    "${entry.packageName} · ${formatSize(entry.apkSize)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(
+                    modifier = Modifier.padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (entry.isSystem) {
+                        TinyBadge(
+                            "系统",
+                            MaterialTheme.colorScheme.secondaryContainer,
+                            MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                    }
+                    if (!entry.isEnabled) {
+                        TinyBadge(
+                            "已停用",
+                            MaterialTheme.colorScheme.errorContainer,
+                            MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                    if (entry.isUninstalled) {
+                        TinyBadge(
+                            "已删除",
+                            MaterialTheme.colorScheme.tertiaryContainer,
+                            MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 文字 Tab（均匀分布，B 站式下划线指示器，带个数） */
+@Composable
+private fun FilterTabRow(
+    options: List<String>,
+    counts: List<Int>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        options.forEachIndexed { i, label ->
+            val selected = i == selectedIndex
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { onSelect(i) }
+                    .padding(vertical = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    "$label ${counts.getOrNull(i) ?: 0}",
+                    style = if (selected) MaterialTheme.typography.titleSmall
+                    else MaterialTheme.typography.bodyMedium,
+                    color = if (selected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = if (selected) androidx.compose.ui.text.font.FontWeight.Bold else null,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.height(4.dp))
+                Box(
+                    modifier = Modifier
+                        .width(20.dp)
+                        .height(3.dp)
+                        .background(
+                            if (selected) MaterialTheme.colorScheme.primary
+                            else Color.Transparent,
+                            RoundedCornerShape(2.dp),
+                        ),
                 )
             }
-        },
-        leadingContent = {
-            if (selectMode) {
-                Checkbox(checked = checked, onCheckedChange = null)
-            } else {
-                AppIcon(entry)
-            }
-        },
-        trailingContent = {
-            if (!selectMode) {
-                TextButton(onClick = onExtract) { Text("提取") }
-            }
-        },
-        modifier = Modifier.combinedClickable(
-            onClick = onClick,
-            onLongClick = onLongClick,
-        ),
-    )
+        }
+    }
 }
+
+/** 建议精简页顶部提示：按子筛选显示该等级的具体影响 */
+@Composable
+private fun SuggestHint(sub: SuggestSubFilter, count: Int) {
+    if (sub == SuggestSubFilter.ALL) {
+        // 全部档：只保留一句手势提示（tab 上已有计数）
+        Text(
+            "长按多选可批量停用 / 删除 / 恢复 / 提取",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+        )
+    } else {
+        val (text, bg, fg) = when (sub) {
+            SuggestSubFilter.DELETABLE ->
+                Triple("✅ 卸载无影响，可放心删除", Color(0xFFE3F2FD), Color(0xFF1565C0))
+            SuggestSubFilter.CAREFUL ->
+                Triple("⚠️ 可能影响部分功能，建议先停用观察", Color(0xFFFFF8E1), Color(0xFFF57F00))
+            SuggestSubFilter.NOT_RECOMMENDED ->
+                Triple("⛔ 可能导致系统异常，非必要不动", Color(0xFFFFEBEE), Color(0xFFC62828))
+            SuggestSubFilter.DO_NOT ->
+                Triple("🚫 会导致系统故障，请勿操作", Color(0xFFFCE4EC), Color(0xFFB71C1C))
+            else -> Triple("", Color.Transparent, Color.Transparent)
+        }
+        Surface(
+            color = bg,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 2.dp),
+        ) {
+            Text(
+                "$text（共 $count 个）",
+                style = MaterialTheme.typography.bodySmall,
+                color = fg,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            )
+        }
+    }
+}
+
+/** 建议精简行的卡片：显示 UAD 建议等级徽标，手势与其他 Tab 统一（点击详情/长按多选） */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SuggestAppCard(
+    entry: AppEntry,
+    selectMode: Boolean,
+    checked: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val context = LocalContext.current
+    val uadInfo = remember(entry.packageName) {
+        UadDb.query(context, entry.packageName)
+    }
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (checked) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+        border = if (checked) androidx.compose.foundation.BorderStroke(
+            2.dp, MaterialTheme.colorScheme.primary
+        ) else null,
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (selectMode) {
+                Checkbox(
+                    checked = checked,
+                    onCheckedChange = null,
+                    modifier = Modifier.padding(end = 4.dp),
+                )
+            }
+            AppIcon(entry, modifier = Modifier.size(46.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    entry.appName,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "${entry.packageName} · ${formatSize(entry.apkSize)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(
+                    modifier = Modifier.padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (uadInfo != null) {
+                        val (bc, cc) = uadBadgeColors(uadInfo.removal)
+                        TinyBadge(uadInfo.titleCn, bc, cc)
+                    }
+                    if (!entry.isEnabled) {
+                        TinyBadge(
+                            "已停用",
+                            MaterialTheme.colorScheme.errorContainer,
+                            MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                    if (entry.isUninstalled) {
+                        TinyBadge(
+                            "已删除",
+                            MaterialTheme.colorScheme.tertiaryContainer,
+                            MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 @Composable
 private fun TinyBadge(
@@ -466,13 +1042,30 @@ private fun TinyBadge(
     container: androidx.compose.ui.graphics.Color,
     content: androidx.compose.ui.graphics.Color,
 ) {
-    Surface(color = container, shape = RoundedCornerShape(4.dp)) {
+    Surface(color = container, shape = RoundedCornerShape(20.dp)) {
         Text(
             text,
-            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
             style = MaterialTheme.typography.labelSmall,
             color = content,
         )
+    }
+}
+
+/** UAD 建议等级徽标颜色：可删除=蓝，谨慎删除=灰绿，不建议删除=浅红，请勿删除=深红 */
+@Composable
+private fun uadBadgeColors(removal: String): Pair<androidx.compose.ui.graphics.Color, androidx.compose.ui.graphics.Color> {
+    return when (removal) {
+        "Recommended" -> MaterialTheme.colorScheme.primaryContainer to
+            MaterialTheme.colorScheme.onPrimaryContainer
+        "Advanced" -> MaterialTheme.colorScheme.secondaryContainer to
+            MaterialTheme.colorScheme.onSecondaryContainer
+        "Expert" -> MaterialTheme.colorScheme.errorContainer to
+            MaterialTheme.colorScheme.onErrorContainer
+        "Unsafe" -> MaterialTheme.colorScheme.error to
+            MaterialTheme.colorScheme.onError
+        else -> MaterialTheme.colorScheme.surfaceVariant to
+            MaterialTheme.colorScheme.onSurfaceVariant
     }
 }
 
@@ -485,6 +1078,898 @@ private fun ShizukuDot(status: ShizukuManager.Status) {
     }
     Surface(color = color, shape = CircleShape, modifier = Modifier.size(10.dp)) {}
 }
+
+// ================= 精简清单 Tab =================
+
+/** 分组标题 */
+@Composable
+private fun GroupHeader(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+    )
+}
+
+/** 内容卡片 */
+@Composable
+private fun ContentCard(content: @Composable () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun DebloatTab(
+    vm: AppViewModel,
+    onExportScript: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var text by remember { mutableStateOf("") }
+    val items = vm.debloatItems
+    val shizukuReady = vm.shizukuStatus == ShizukuManager.Status.Ready
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        // OTA 状态卡
+        if (vm.restoredApps.isNotEmpty()) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                ),
+                shape = RoundedCornerShape(20.dp),
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(
+                        "有 ${vm.restoredApps.size} 个应用被系统恢复",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        "可能因 OTA 系统更新导致",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(
+                            onClick = {
+                                if (shizukuReady) vm.reapplyRestored()
+                                else vm.showShizukuDialog = true
+                            },
+                        ) { Text("重新执行") }
+                        TextButton(onClick = { vm.ignoreRestored() }) { Text("忽略") }
+                    }
+                }
+            }
+        }
+
+        GroupHeader("导入")
+        ContentCard {
+            Text(
+                "从文本导入",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "每行一个包名（# 开头为注释），解析后可批量停用/删除",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(120.dp),
+                placeholder = { Text("com.example.app1\ncom.example.app2") },
+                shape = RoundedCornerShape(16.dp),
+            )
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = { vm.parseDebloatList(text) },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+            ) { Text("解析清单") }
+        }
+
+        if (items.isNotEmpty()) {
+            GroupHeader("解析结果（${items.size} 个，${items.count { it.entry != null }} 个在手机上）")
+            ContentCard {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items.forEach { item ->
+                        val e = item.entry
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    e?.appName ?: item.packageName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    item.packageName,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            val label = when {
+                                e == null -> "未找到"
+                                e.isUninstalled -> "已删除"
+                                !e.isEnabled -> "已停用"
+                                else -> "已安装"
+                            }
+                            val (bc, cc) = when {
+                                e == null -> MaterialTheme.colorScheme.surfaceVariant to
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                e.isUninstalled -> MaterialTheme.colorScheme.tertiaryContainer to
+                                    MaterialTheme.colorScheme.onTertiaryContainer
+                                !e.isEnabled -> MaterialTheme.colorScheme.errorContainer to
+                                    MaterialTheme.colorScheme.onErrorContainer
+                                else -> MaterialTheme.colorScheme.primaryContainer to
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                            }
+                            TinyBadge(label, bc, cc)
+                        }
+                    }
+                    if (shizukuReady) {
+                        val canDisable = items.mapNotNull { it.entry }
+                            .filter { it.isEnabled && !it.isUninstalled }
+                        val canDelete = items.mapNotNull { it.entry }
+                            .filter { !it.isUninstalled }
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            FilledTonalButton(
+                                onClick = { vm.batchSetEnabled(canDisable, false) },
+                                enabled = canDisable.isNotEmpty() && vm.progress == null,
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(16.dp),
+                            ) { Text("停用全部(${canDisable.size})") }
+                            OutlinedButton(
+                                onClick = { vm.confirmBatchDelete = canDelete },
+                                enabled = canDelete.isNotEmpty() && vm.progress == null,
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(16.dp),
+                            ) {
+                                Text(
+                                    "删除全部(${canDelete.size})",
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
+                    } else {
+                        TextButton(onClick = { vm.showShizukuDialog = true }) {
+                            Text("批量操作需要 Shizuku，点击去设置 →")
+                        }
+                    }
+                }
+            }
+        }
+
+        GroupHeader("导出")
+        ContentCard {
+            Text(
+                "导出 ADB 脚本",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "将当前停用/删除状态导出为 .sh，可在电脑上执行",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedButton(
+                onClick = onExportScript,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+            ) { Text("导出脚本") }
+        }
+
+        GroupHeader("系统状态")
+        ContentCard {
+            Text(
+                "OTA 恢复检测",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (vm.restoredApps.isEmpty()) "当前无被系统恢复的应用"
+                else "有 ${vm.restoredApps.size} 个应用被恢复，见上方提醒",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+// ================= 设置 Tab =================
+
+@Composable
+private fun SettingsTab(
+    vm: AppViewModel,
+    onOpenExtractSettings: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val settings by vm.settings.collectAsState()
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 8.dp),
+    ) {
+        GroupHeader("常用")
+        SettingsCard {
+            SettingsRow(
+                icon = Icons.Filled.Terminal,
+                title = "Shizuku",
+                subtitle = when (vm.shizukuStatus) {
+                    ShizukuManager.Status.Ready -> "已连接 · 可停用/删除/终端"
+                    ShizukuManager.Status.NotInstalled -> "未安装"
+                    ShizukuManager.Status.NotRunning -> "未运行"
+                    ShizukuManager.Status.NoPermission -> "未授权"
+                    else -> "检测中"
+                },
+                trailing = { ShizukuDot(vm.shizukuStatus) },
+                onClick = {
+                    vm.refreshShizukuStatus()
+                    vm.showShizukuDialog = true
+                },
+            )
+        }
+
+        GroupHeader("显示")
+        SettingsCard {
+            SettingsRow(
+                icon = Icons.Filled.Sort,
+                title = "排序",
+                subtitle = "${settings.sortKey.title} · ${if (settings.sortAsc) "升序" else "降序"}",
+                onClick = { vm.showSort = true },
+                showDivider = true,
+            )
+            SettingsRow(
+                icon = Icons.Filled.Share,
+                title = "导出列表",
+                subtitle = "CSV / Markdown / JSON",
+                onClick = { vm.showExport = true },
+                showDivider = true,
+            )
+            SettingsRow(
+                icon = Icons.Outlined.Settings,
+                title = "提取设置",
+                subtitle = "保存目录 · 文件命名",
+                onClick = onOpenExtractSettings,
+            )
+        }
+
+        GroupHeader("外观")
+        SettingsCard {
+            SettingsRow(
+                icon = Icons.Filled.DarkMode,
+                title = "深色模式",
+                subtitle = vm.themeModeTitle(settings.themeMode),
+                onClick = { vm.showThemeDialog = true },
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+/** 设置分组卡片 */
+@Composable
+private fun SettingsCard(content: @Composable () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Column(Modifier.padding(vertical = 4.dp)) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun SettingsRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String? = null,
+    trailing: @Composable (() -> Unit)? = null,
+    showDivider: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier.size(38.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge)
+                if (subtitle != null) {
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (trailing != null) {
+                trailing()
+                Spacer(Modifier.width(8.dp))
+            }
+            Text(
+                "›",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        if (showDivider) {
+            HorizontalDivider(
+                modifier = Modifier.padding(start = 68.dp, end = 16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            )
+        }
+    }
+}
+
+// ================= Shizuku 终端（全屏） =================
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TerminalScreen(vm: AppViewModel, onBack: () -> Unit) {
+    var input by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
+    LaunchedEffect(vm.terminalLines.size) {
+        if (vm.terminalLines.isNotEmpty()) {
+            listState.animateScrollToItem(vm.terminalLines.size - 1)
+        }
+    }
+    val connected = vm.shizukuStatus == ShizukuManager.Status.Ready
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Shizuku 终端") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Filled.Close, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    TinyBadge(
+                        if (connected) "● 已连接" else "● 未连接",
+                        if (connected) Color(0xFFD3F8D3) else MaterialTheme.colorScheme.errorContainer,
+                        if (connected) Color(0xFF0A5C0A) else MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    TextButton(onClick = { vm.clearTerminal() }) { Text("清屏") }
+                },
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+        ) {
+            Text(
+                "以 shell 身份执行命令（pm / cmd / dumpsys …）。多条命令用 ; 分隔批量执行，不支持管道与重定向",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 4.dp),
+            )
+            Surface(
+                color = Color(0xFF0D1117),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+            ) {
+                if (vm.terminalLines.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "输入命令开始，例如：\npm list packages\npm disable-user --user 0 <包名>",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = Color(0xFF8B949E),
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        items(vm.terminalLines) { line ->
+                            Text(
+                                line.text,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = when {
+                                    line.isError -> Color(0xFFFF7B72)
+                                    line.isCommand -> Color(0xFF79C0FF)
+                                    else -> Color(0xFFC9D1D9)
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(bottom = 16.dp),
+            ) {
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("pm …") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Send,
+                    ),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                        onSend = {
+                            vm.execTerminalCommand(input)
+                            input = ""
+                        },
+                    ),
+                )
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = {
+                        vm.execTerminalCommand(input)
+                        input = ""
+                    },
+                    enabled = !vm.terminalRunning,
+                    shape = RoundedCornerShape(16.dp),
+                ) { Text("执行") }
+            }
+        }
+    }
+}
+
+// ================= 应用详情 BottomSheet =================
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
+private fun DetailSheet(
+    vm: AppViewModel,
+    entry: AppEntry,
+    shizukuReady: Boolean,
+    onToggleEnabled: () -> Unit,
+    onDelete: () -> Unit,
+    onRestore: () -> Unit,
+    onOpenShizuku: () -> Unit,
+    onExtract: () -> Unit,
+    onOpenSystemSettings: () -> Unit,
+    onCopied: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    fun copy(value: String) {
+        clipboard.setText(AnnotatedString(value))
+        onCopied()
+    }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp),
+        ) {
+            // 头部：大图标 + 名称 + 徽标（名称/包名长按复制）
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AppIcon(entry, modifier = Modifier.size(56.dp))
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        entry.appName,
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.combinedClickable(
+                            onClick = {},
+                            onLongClick = { copy(entry.appName) },
+                        ),
+                    )
+                    Text(
+                        entry.packageName,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.combinedClickable(
+                            onClick = {},
+                            onLongClick = { copy(entry.packageName) },
+                        ),
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                if (entry.isSystem) {
+                    TinyBadge(
+                        "系统应用",
+                        MaterialTheme.colorScheme.secondaryContainer,
+                        MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+                TinyBadge(
+                    when {
+                        entry.isUninstalled -> "已删除"
+                        entry.isEnabled -> "已启用"
+                        else -> "已停用"
+                    },
+                    when {
+                        entry.isUninstalled -> MaterialTheme.colorScheme.tertiaryContainer
+                        entry.isEnabled -> MaterialTheme.colorScheme.primaryContainer
+                        else -> MaterialTheme.colorScheme.errorContainer
+                    },
+                    when {
+                        entry.isUninstalled -> MaterialTheme.colorScheme.onTertiaryContainer
+                        entry.isEnabled -> MaterialTheme.colorScheme.onPrimaryContainer
+                        else -> MaterialTheme.colorScheme.onErrorContainer
+                    },
+                )
+            }
+
+            SectionTitle("基本信息")
+            DetailGrid(
+                listOf(
+                    "版本名称" to (entry.versionName ?: "未知"),
+                    "版本号" to entry.versionCode.toString(),
+                    "APK 大小" to formatSize(entry.apkSize),
+                    "拆分包" to if (entry.splitSourceDirs.isNotEmpty())
+                        "${entry.splitSourceDirs.size} 个" else "无",
+                    "首次安装" to formatDate(entry.firstInstallTime),
+                    "最后更新" to formatDate(entry.lastUpdateTime),
+                )
+            )
+            // 安装包路径单独一行，长按复制
+            DetailRow(
+                "安装包路径",
+                entry.sourceDir ?: "未知",
+                onCopy = ::copy,
+                copyable = true,
+            )
+
+            SectionTitle("使用与存储")
+            UsageRow(vm = vm, entry = entry)
+            Spacer(Modifier.height(8.dp))
+            StorageSection(vm = vm, entry = entry)
+
+            UadSection(entry = entry)
+            Spacer(Modifier.height(8.dp))
+        }
+
+        // 底部常驻操作区（状态感知）
+        Column(Modifier.padding(horizontal = 20.dp)) {
+            HorizontalDivider()
+            if (shizukuReady) {
+                when {
+                    // 已删除的系统应用：可恢复安装
+                    entry.isUninstalled && entry.isSystem -> {
+                        Text(
+                            "安装包保留在系统分区，可一键恢复，无需重新下载。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 8.dp),
+                        )
+                        Button(
+                            onClick = onRestore,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp),
+                            shape = RoundedCornerShape(16.dp),
+                        ) { Text("恢复安装") }
+                    }
+                    // 已删除的用户应用：彻底删除，无操作
+                    entry.isUninstalled -> {
+                        Text(
+                            "该应用已彻底删除，无法恢复。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 12.dp),
+                        )
+                    }
+                    // 正常状态：停用/启用 + 删除
+                    else -> {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.padding(vertical = 12.dp),
+                        ) {
+                            FilledTonalButton(
+                                onClick = onToggleEnabled,
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(16.dp),
+                            ) {
+                                Text(if (entry.isEnabled) "停用" else "启用")
+                            }
+                            Button(
+                                onClick = onDelete,
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                                ),
+                            ) { Text("删除") }
+                        }
+                    }
+                }
+            } else {
+                TextButton(
+                    onClick = onOpenShizuku,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                ) { Text("停用 / 删除需要 Shizuku，点击去设置 →") }
+            }
+            // 已删除的应用不再显示提取/系统设置
+            if (!entry.isUninstalled) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 24.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                ) {
+                    TextButton(onClick = onExtract) { Text("提取安装包") }
+                    TextButton(onClick = onOpenSystemSettings) { Text("系统设置") }
+                }
+            } else {
+                Spacer(Modifier.height(16.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+    )
+}
+
+@Composable
+private fun UsageRow(vm: AppViewModel, entry: AppEntry) {
+    // 未授权时直接隐藏（权限在启动时申请）
+    if (!vm.hasUsagePerm) return
+    Column {
+        Text(
+            "最近使用",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            UsageStatsHelper.formatLastUsed(entry.lastUsed),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
+@Composable
+private fun StorageSection(vm: AppViewModel, entry: AppEntry) {
+    val info = vm.storageInfo
+    val shizukuReady = vm.shizukuStatus == ShizukuManager.Status.Ready
+    LaunchedEffect(entry.packageName) {
+        vm.loadStorageInfo(entry.packageName)
+    }
+    DisposableEffect(entry.packageName) {
+        onDispose { vm.clearStorageInfo() }
+    }
+    // 未授权时直接隐藏（权限在启动时申请）
+    if (!vm.hasUsagePerm) return
+    Column {
+        Text(
+            "存储占用",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        when {
+            info == null -> {
+                Text(
+                    "加载中…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            else -> {
+                Text(
+                    "应用 ${StorageHelper.formatBytes(info.appBytes)} · " +
+                        "数据 ${StorageHelper.formatBytes(info.dataBytes)} · " +
+                        "缓存 ${StorageHelper.formatBytes(info.cacheBytes)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (shizukuReady && info.dataBytes > 0) {
+                    TextButton(
+                        onClick = { vm.confirmClearData = entry },
+                        contentPadding = PaddingValues(0.dp),
+                    ) {
+                        Text(
+                            "清除数据（pm clear）",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UadSection(entry: AppEntry) {
+    val context = LocalContext.current
+    val info = remember(entry.packageName) {
+        UadDb.query(context, entry.packageName)
+    } ?: return
+    var expanded by remember { mutableStateOf(false) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded }
+            .padding(vertical = 8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "社区建议",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(8.dp))
+            val (bc, cc) = uadBadgeColors(info.removal)
+            TinyBadge(info.titleCn, bc, cc)
+            if (info.subtitleCn.isNotBlank()) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    info.subtitleCn,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (expanded && info.description.isNotBlank()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                info.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Text(
+            "数据来源：Universal Android Debloater 社区清单，仅供参考",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.outline,
+        )
+    }
+}
+
+/** 双列信息网格：一行显示两个字段 */
+@Composable
+private fun DetailGrid(items: List<Pair<String, String>>) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        items.chunked(2).forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                row.forEach { (label, value) ->
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            value,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                // 奇数个时补齐占位，保持对齐
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+/**
+ * 详情行：copyable=true 时长按复制（仅应用名/包名/安装包路径）
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun DetailRow(
+    label: String,
+    value: String,
+    onCopy: (String) -> Unit,
+    copyable: Boolean = false,
+) {
+    Column(Modifier.padding(vertical = 2.dp)) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            overflow = TextOverflow.Ellipsis,
+            modifier = if (copyable) {
+                Modifier.combinedClickable(
+                    onClick = {},
+                    onLongClick = { onCopy(value) },
+                )
+            } else Modifier,
+        )
+    }
+}
+
+// ================= 保留弹窗 =================
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -508,6 +1993,7 @@ private fun ShizukuDialog(vm: AppViewModel, onDismiss: () -> Unit) {
     }
     AlertDialog(
         onDismissRequest = onDismiss,
+        shape = DIALOG_SHAPE,
         title = { Text(title) },
         text = { Text(body) },
         confirmButton = {
@@ -547,6 +2033,7 @@ private fun SortDialog(vm: AppViewModel, onDismiss: () -> Unit) {
     var asc by remember { mutableStateOf(settings.sortAsc) }
     AlertDialog(
         onDismissRequest = onDismiss,
+        shape = DIALOG_SHAPE,
         title = { Text("排序") },
         text = {
             Column {
@@ -599,6 +2086,7 @@ private fun ExportDialog(
     val totalCount = vm.totalCount()
     AlertDialog(
         onDismissRequest = onDismiss,
+        shape = DIALOG_SHAPE,
         title = { Text("导出应用信息") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
@@ -669,128 +2157,4 @@ private fun ExportDialog(
             TextButton(onClick = onDismiss) { Text("取消") }
         },
     )
-}
-
-@Composable
-private fun AppDetailDialog(
-    entry: AppEntry,
-    shizukuReady: Boolean,
-    onToggleEnabled: () -> Unit,
-    onDelete: () -> Unit,
-    onOpenShizuku: () -> Unit,
-    onExtract: () -> Unit,
-    onOpenSystemSettings: () -> Unit,
-    onCopied: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val clipboard = LocalClipboardManager.current
-    fun copy(value: String) {
-        clipboard.setText(AnnotatedString(value))
-        onCopied()
-    }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(entry.appName) },
-        text = {
-            Column(
-                Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                DetailRow("应用包名", entry.packageName, onCopy = ::copy)
-                DetailRow("版本名称", entry.versionName ?: "未知", onCopy = ::copy)
-                DetailRow("版本号", entry.versionCode.toString(), onCopy = ::copy)
-                DetailRow("APK 大小", formatSize(entry.apkSize), onCopy = ::copy)
-                DetailRow("首次安装", formatDate(entry.firstInstallTime), onCopy = ::copy)
-                DetailRow("最后更新", formatDate(entry.lastUpdateTime), onCopy = ::copy)
-                DetailRow("系统应用", if (entry.isSystem) "是" + if (entry.isUpdatedSystemApp) "（已更新）" else "" else "否", onCopy = ::copy)
-                DetailRow(
-                    "状态",
-                    when {
-                        entry.isUninstalled -> "已删除"
-                        entry.isEnabled -> "已启用"
-                        else -> "已停用"
-                    },
-                    onCopy = ::copy,
-                )
-                DetailRow("安装包路径", entry.sourceDir ?: "未知", onCopy = ::copy)
-                if (entry.splitSourceDirs.isNotEmpty()) {
-                    DetailRow("拆分包数量", entry.splitSourceDirs.size.toString(), onCopy = ::copy)
-                }
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                // Shizuku 快捷操作：停用/启用/删除
-                if (shizukuReady) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        if (!entry.isUninstalled) {
-                            FilledTonalButton(
-                                onClick = onToggleEnabled,
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text(if (entry.isEnabled) "停用" else "启用")
-                            }
-                        }
-                        OutlinedButton(
-                            onClick = onDelete,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text(
-                                "删除",
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
-                    }
-                    Text(
-                        "经 Shizuku 执行，等同 adb shell pm 命令",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else {
-                    TextButton(onClick = onOpenShizuku) {
-                        Text("停用 / 删除需要 Shizuku，点击去设置 →")
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onExtract) { Text("提取安装包") }
-        },
-        dismissButton = {
-            Row {
-                TextButton(onClick = onOpenSystemSettings) { Text("系统设置") }
-                TextButton(onClick = onDismiss) { Text("关闭") }
-            }
-        },
-    )
-}
-
-@Composable
-private fun DetailRow(label: String, value: String, onCopy: (String) -> Unit) {
-    Column {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                value,
-                style = MaterialTheme.typography.bodyMedium,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            IconButton(
-                onClick = { onCopy(value) },
-                modifier = Modifier.size(32.dp),
-            ) {
-                Icon(
-                    Icons.Filled.ContentCopy,
-                    contentDescription = "复制$label",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-        }
-    }
 }

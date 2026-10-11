@@ -152,9 +152,9 @@ public interface IShizukuApi extends android.os.IInterface
   /** @hide */
   public static final java.lang.String DESCRIPTOR = "dev.appinspector.shizuku.IShizukuApi";
   /**
-   * 以 shell 身份执行 pm 命令。
-   * @param args pm 参数，例如 ["disable-user", "--user", "0", "com.example"]
-   * @return pm 的完整输出（stdout+stderr）；包含 "Failure" 即执行失败
+   * 以 shell 身份执行命令。
+   * @param args 完整命令，例如 ["pm", "disable-user", "--user", "0", "com.example"]
+   * @return 命令的完整输出（stdout+stderr）；包含 "Failure" 即执行失败
    */
   public java.lang.String execPm(java.lang.String[] args) throws android.os.RemoteException;
   /** 退出 service 进程。调用后 binder 失效，须在最后调用。 */
