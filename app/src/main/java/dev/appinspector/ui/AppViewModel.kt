@@ -10,12 +10,19 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import android.content.pm.PackageManager
+import android.os.Build
 import dev.appinspector.data.AppEntry
 import dev.appinspector.data.AppFilter
 import dev.appinspector.data.SuggestSubFilter
+import dev.appinspector.data.ProtectedApps
+import dev.appinspector.accessibility.AutoDisableBus
+import dev.appinspector.accessibility.AutoDisableService
+import dev.appinspector.accessibility.AutoDisableState
+import dev.appinspector.accessibility.AutoDisableTarget
 import dev.appinspector.data.AppRepository
 import dev.appinspector.data.AppSettings
 import dev.appinspector.data.SettingsStore
@@ -37,6 +44,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 import java.text.Collator
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -70,7 +79,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var selectMode by mutableStateOf(false)
     val selected = mutableStateMapOf<String, AppEntry>()
 
-    var showSort by mutableStateOf(false)
     var showExport by mutableStateOf(false)
     var detailEntry by mutableStateOf<AppEntry?>(null)
 
@@ -169,10 +177,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var exportFormat by mutableStateOf(ExportFormat.MD)
     var exportScopeAll by mutableStateOf(false)
 
+    // 无障碍自动停用状态（必须声明在 init 之前：init 里会同步调用 refreshAccessibility()）
+    var accessibilityEnabled by mutableStateOf(false)
+        private set
+    var autoDisableUi by mutableStateOf<AutoDisableState>(AutoDisableState.Idle)
+        private set
+    /** 自动停用配置详情弹窗 */
+    var showAutoDisableDetail by mutableStateOf(false)
+    /** 首页排序底部弹窗 */
+    var showSortSheet by mutableStateOf(false)
+    /**
+     * 批量停用失败记下的包名（系统拒绝）。收拢到「保护应用停用」卡片，
+     * 与 14 个保护应用一起走无障碍自动停用。通用：以后任何受限应用同理。
+     */
+    var batchFailedPkgs by mutableStateOf(setOf<String>())
+        private set
+
     init {
         refresh()
         ShizukuManager.addPermissionListener(shizukuPermissionListener)
         refreshShizukuStatus()
+        refreshAccessibility()
+        // 镜像无障碍自动停用的状态总线；跑完后刷新列表
+        viewModelScope.launch {
+            AutoDisableBus.state.collect { s ->
+                autoDisableUi = s
+                if (s is AutoDisableState.Done) {
+                    // 成功的从批量失败记录里清除
+                    val okPkgs = s.results.filter { it.ok }.map { it.target.pkg }.toSet()
+                    if (okPkgs.isNotEmpty()) batchFailedPkgs = batchFailedPkgs - okPkgs
+                    refresh()
+                }
+            }
+        }
     }
 
     override fun onCleared() {
@@ -323,6 +360,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             progress = ExtractProgress(0, entries.size, "")
             var ok = 0
             val failed = mutableListOf<String>()
+            val failedPkgs = mutableListOf<String>()
             for ((i, e) in entries.withIndex()) {
                 progress = ExtractProgress(i, entries.size, e.appName)
                 val res = ShizukuManager.setEnabled(ctx, e.packageName, enabled)
@@ -333,6 +371,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     else store.trackDisabled(e.packageName)
                 } else {
                     failed.add(e.appName)
+                    // 批量停用被拒 → 记下包名，收拢到「自动停用」卡片走无障碍通道
+                    if (!enabled) failedPkgs.add(e.packageName)
                 }
             }
             progress = ExtractProgress(entries.size, entries.size, "")
@@ -340,6 +380,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             exitSelectMode()
             debloatItems = emptyList()
             refresh()
+            if (failedPkgs.isNotEmpty()) batchFailedPkgs = batchFailedPkgs + failedPkgs
             toastMsg = buildString {
                 append(if (enabled) "批量启用完成" else "批量停用完成")
                 append("：成功 $ok 个")
@@ -348,9 +389,152 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     append(failed.take(3).joinToString("、"))
                     if (failed.size > 3) append("…")
                     append("，系统拒绝）")
+                    if (failedPkgs.isNotEmpty()) append("，已记入自动停用待处理")
                 }
             }
         }
+    }
+
+    // ================= 停用保护解锁 =================
+
+    /** 解锁组件（CTS 测试包）是否已安装 */
+    var unlockPkgInstalled by mutableStateOf(false)
+        private set
+
+    fun refreshUnlockPkg() {
+        unlockPkgInstalled = runCatching {
+            getApplication<Application>().packageManager
+                .getPackageInfo(ProtectedApps.UNLOCK_PKG, 0)
+            true
+        }.getOrDefault(false)
+    }
+
+    /** 安装解锁组件：从 assets 释放 apk，经系统安装器安装 */
+    fun installUnlockPkg(context: Context) {
+        val pm = context.packageManager
+        if (Build.VERSION.SDK_INT >= 26 && !pm.canRequestPackageInstalls()) {
+            runCatching {
+                context.startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:${context.packageName}"),
+                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }.onFailure {
+                toastMsg = "请在系统设置中允许「应用检查器」安装未知应用"
+            }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val file = File(context.cacheDir, "unlock.apk")
+                context.assets.open("unlock.apk").use { input ->
+                    FileOutputStream(file).use { output -> input.copyTo(output) }
+                }
+                val uri = FileProvider.getUriForFile(
+                    context, "${context.packageName}.fileprovider", file
+                )
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "application/vnd.android.package-archive")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                withContext(Dispatchers.Main) { context.startActivity(intent) }
+            } catch (t: Throwable) {
+                withContext(Dispatchers.Main) { toastMsg = "释放安装包失败：${t.message}" }
+            }
+        }
+    }
+
+    fun appNameOf(pkg: String): String =
+        allApps.find { it.packageName == pkg }?.appName ?: pkg
+
+    // ================= 无障碍自动停用（通用引擎） =================
+
+    fun refreshAccessibility() {
+        val ctx = getApplication<Application>()
+        val flat = AutoDisableService.componentName(ctx).flattenToString()
+        val enabled = Settings.Secure.getString(
+            ctx.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+        )
+        accessibilityEnabled = enabled?.split(':')?.contains(flat) == true
+    }
+
+    /** 跳转系统无障碍设置 */
+    fun openAccessibilitySettings() {
+        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { getApplication<Application>().startActivity(intent) }
+            .onFailure { toastMsg = "无法打开无障碍设置" }
+    }
+
+    /**
+     * 无障碍自动停用（通用：任意包名列表）。
+     * 引擎自动打开系统应用详情页并点击「停用」，全程无需手动操作。
+     */
+    fun startAutoDisable(pkgs: List<String>) {
+        val known = allApps.filter {
+            it.packageName in pkgs && it.isEnabled && !it.isUninstalled
+        }.map { AutoDisableTarget(it.packageName, it.appName) }
+        val knownPkgs = known.map { it.pkg }.toSet()
+        val all = known + pkgs.filter { it !in knownPkgs }
+            .map { AutoDisableTarget(it, it) }
+        if (all.isEmpty()) {
+            toastMsg = "所选应用均已停用，无需操作"
+            return
+        }
+        if (all.any { it.pkg in ProtectedApps.PKGS } && !unlockPkgInstalled) {
+            // 直接打开配置弹窗引导安装，而不是只弹 toast
+            showAutoDisableDetail = true
+            return
+        }
+        refreshAccessibility()
+        if (!accessibilityEnabled) {
+            // 直接打开配置弹窗引导开启，而不是只弹 toast
+            showAutoDisableDetail = true
+            return
+        }
+        AutoDisableService.start(all)
+    }
+
+    /** 停止正在进行的自动停用 */
+    fun stopAutoDisable() {
+        AutoDisableService.stop()
+    }
+
+    /** 重试自动停用中失败的项 */
+    fun retryAutoDisableFailed() {
+        val s = autoDisableUi as? AutoDisableState.Done ?: return
+        val failed = s.results.filter { !it.ok }
+        if (failed.isEmpty()) return
+        startAutoDisable(failed.map { it.target.pkg })
+    }
+
+    /** 关闭自动停用结果面板 */
+    fun dismissAutoDisableResult() {
+        autoDisableUi = AutoDisableState.Idle
+        AutoDisableBus.update(AutoDisableState.Idle)
+    }
+
+    /**
+     * 待自动停用的应用：仅批量停用失败记下的包（14 个保护应用不再默认列出）。
+     * 过滤掉已停用/已删除的。
+     */
+    val pendingAutoDisable: List<AutoDisableTarget>
+        get() = batchFailedPkgs.mapNotNull { pkg ->
+            allApps.find { it.packageName == pkg }
+                ?.takeIf { it.isEnabled && !it.isUninstalled }
+                ?.let { AutoDisableTarget(it.packageName, it.appName) }
+        }
+
+    /** 对待处理列表执行无障碍自动停用 */
+    fun autoDisablePending() {
+        val pkgs = pendingAutoDisable.map { it.pkg }
+        if (pkgs.isEmpty()) {
+            toastMsg = "暂无待处理应用"
+            return
+        }
+        startAutoDisable(pkgs)
     }
 
     /** 批量删除（需 Shizuku），调用前请先经 confirmBatchDelete 确认 */
@@ -587,6 +771,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (selected.remove(e.packageName) == null) selected[e.packageName] = e
     }
 
+    /** 全选当前列表 */
+    fun selectAll(entries: List<AppEntry>) {
+        entries.forEach { selected[it.packageName] = it }
+    }
+
     fun enterSelectMode(e: AppEntry? = null) {
         selectMode = true
         selected.clear()
@@ -640,18 +829,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- 精简清单导入 ----------
 
     /** 解析粘贴的包名清单（每行一个，# 开头为注释），匹配本地应用 */
-    fun parseDebloatList(text: String) {
-        val pkgs = text.lineSequence()
+    /** 从文本提取包名：支持纯包名、pm 命令、adb shell pm 命令 */
+    private val pkgPattern = Regex("""\b([a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)+)\b""")
+    fun extractPackageNames(text: String): List<String> {
+        // 先按分号拆（pm 命令常用分号连接），再按行拆
+        return text.split(";")
+            .flatMap { it.lineSequence() }
             .map { it.trim() }
             .filter { it.isNotEmpty() && !it.startsWith("#") }
+            .flatMap { line ->
+                // 纯包名行直接取；命令里用正则提取
+                if (line.matches(Regex("""[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)+"""))) {
+                    listOf(line)
+                } else {
+                    pkgPattern.findAll(line).map { it.groupValues[1] }.toList()
+                }
+            }
             .distinct()
             .toList()
+    }
+
+    fun parseDebloatList(text: String) {
+        val pkgs = extractPackageNames(text)
         if (pkgs.isEmpty()) {
             toastMsg = "未解析到有效包名"
             return
         }
         val byPkg = allApps.associateBy { it.packageName }
         debloatItems = pkgs.map { DebloatItem(it, byPkg[it]) }
+        toastMsg = "识别出 ${pkgs.size} 个包名"
     }
 
     fun clearDebloatList() {
