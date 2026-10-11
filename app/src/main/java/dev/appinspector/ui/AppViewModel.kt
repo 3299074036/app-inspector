@@ -80,6 +80,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val selected = mutableStateMapOf<String, AppEntry>()
 
     var showExport by mutableStateOf(false)
+    var showExtractSettings by mutableStateOf(false)
     var detailEntry by mutableStateOf<AppEntry?>(null)
 
     // Shizuku

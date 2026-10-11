@@ -7,6 +7,7 @@ import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
@@ -24,7 +25,8 @@ private val LightColors = lightColorScheme(
     primaryContainer = BrandContainer,
     onPrimaryContainer = OnBrandContainer,
     secondaryContainer = Color(0xFFE8DEF8), // 社区徽标紫
-    surface = Color(0xFFF7F8FA), // 页面底：中性浅灰
+    background = Color(0xFFF0F3F1), // 页面底：中性灰（Scaffold 默认取 background，必须显式指定）
+    surface = Color(0xFFF0F3F1), // 与 background 保持一致
     surfaceContainerLow = Color.White, // 卡片底色：纯白
     surfaceContainer = Color(0xFFF0F1F4),
     surfaceContainerHigh = Color(0xFFE8EAEE),
@@ -35,6 +37,7 @@ private val DarkColors = darkColorScheme(
     onPrimary = Color(0xFF06275F),
     primaryContainer = BrandContainerDark,
     onPrimaryContainer = OnBrandContainerDark,
+    background = Color(0xFF111318),
     surface = Color(0xFF111318),
     surfaceContainerLow = Color(0xFF1A1D24),
     surfaceContainer = Color(0xFF1D2026),
@@ -49,6 +52,29 @@ private val AppShapes = Shapes(
     large = RoundedCornerShape(20.dp),
     extraLarge = RoundedCornerShape(28.dp),
 )
+
+// ---------- v5 图标彩色底（浅色柔和彩底 / 深色深底） ----------
+enum class TileKind { BLUE, GREEN, ORANGE, PURPLE }
+
+/** 返回该色系的 (底色, 图标色)，跟随系统深浅 */
+@Composable
+fun tileColors(kind: TileKind): Pair<Color, Color> {
+    val dark = isSystemInDarkTheme()
+    return when (kind) {
+        TileKind.BLUE -> (if (dark) Color(0xFF1E3A5F) else Color(0xFFE8F1FE)) to
+            (if (dark) Color(0xFF8FB6F5) else Color(0xFF1B6EF3))
+        TileKind.GREEN -> (if (dark) Color(0xFF1B4332) else Color(0xFFE7F6EC)) to
+            (if (dark) Color(0xFF6FCF97) else Color(0xFF16A34A))
+        TileKind.ORANGE -> (if (dark) Color(0xFF4A2F14) else Color(0xFFFEF3E2)) to
+            (if (dark) Color(0xFFF5B453) else Color(0xFFD97706))
+        TileKind.PURPLE -> (if (dark) Color(0xFF3B2A5E) else Color(0xFFF3E8FF)) to
+            (if (dark) Color(0xFFB794F6) else Color(0xFF7C3AED))
+    }
+}
+
+// ---------- v5 主按钮渐变 ----------
+fun brandGradient(): Brush =
+    Brush.horizontalGradient(listOf(Color(0xFF3B82F6), Color(0xFF1B6EF3)))
 
 /** 主题模式：system=跟随系统，light=浅色，dark=深色 */
 @Composable

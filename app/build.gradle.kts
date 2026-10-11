@@ -12,8 +12,8 @@ android {
         applicationId = "dev.appinspector"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.0.2"
+        versionCode = 3
+        versionName = "0.0.3"
     }
 
     buildTypes {
@@ -75,6 +75,8 @@ dependencies {
 
     // Shizuku：免 Root 执行 pm 级操作（disable-user / uninstall --user 0）
     implementation("dev.rikka.shizuku:api:13.1.5")
+
+    // 毛玻璃：用 Compose 自带 blur 修饰符实现，不引入第三方库
     implementation("dev.rikka.shizuku:provider:13.1.5")
 
     debugImplementation("androidx.compose.ui:ui-tooling")

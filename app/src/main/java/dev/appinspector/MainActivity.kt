@@ -22,14 +22,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.appinspector.ui.AppViewModel
-import dev.appinspector.ui.ExtractSettingsScreen
 import dev.appinspector.ui.MainScreen
 import dev.appinspector.ui.theme.AppInspectorTheme
-
-sealed interface Screen {
-    data object List : Screen
-    data object ExtractSettings : Screen
-}
 
 /**
  * 诊断用：未捕获异常时把堆栈写到「下载」目录（app-inspector-crash.txt），
@@ -82,17 +76,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    var screen by remember { mutableStateOf<Screen>(Screen.List) }
-                    when (screen) {
-                        Screen.List -> MainScreen(
-                            vm = vm,
-                            onOpenExtractSettings = { screen = Screen.ExtractSettings },
-                        )
-
-                        Screen.ExtractSettings -> ExtractSettingsScreen(
-                            onBack = { screen = Screen.List },
-                        )
-                    }
+                    MainScreen(vm = vm)
                 }
             }
         }

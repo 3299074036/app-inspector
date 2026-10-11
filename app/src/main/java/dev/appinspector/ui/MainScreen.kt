@@ -9,6 +9,7 @@ import dev.appinspector.accessibility.AutoDisableState
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -36,6 +38,9 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -70,8 +75,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -95,8 +98,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import dev.appinspector.ui.theme.TileKind
+import dev.appinspector.ui.theme.brandGradient
+import dev.appinspector.ui.theme.tileColors
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
@@ -137,7 +146,6 @@ private val DIALOG_SHAPE = RoundedCornerShape(28.dp)
 @Composable
 fun MainScreen(
     vm: AppViewModel = viewModel(),
-    onOpenExtractSettings: () -> Unit,
 ) {
     val context = LocalContext.current
     val settings by vm.settings.collectAsState()
@@ -213,40 +221,45 @@ fun MainScreen(
                         },
                     )
                 } else {
-                    TopAppBar(
-                        title = {
-                            Text(
-                                when (tab) {
-                                    MainTab.APPS -> "应用检查器"
-                                    MainTab.LISTS -> "精简清单"
-                                    MainTab.SETTINGS -> "设置"
-                                }
-                            )
-                        },
-                        actions = {
-                            if (tab == MainTab.APPS) {
-                                // 显示系统应用开关（紧凑版，放在刷新按钮左侧）
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(end = 2.dp),
-                                ) {
-                                    Text(
-                                        "显示系统应用",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Spacer(Modifier.width(2.dp))
-                                    Switch(
-                                        checked = settings.showSystem,
-                                        onCheckedChange = { vm.setShowSystem(it) },
-                                    )
-                                }
-                                IconButton(onClick = { vm.refresh() }) {
-                                    Icon(Icons.Filled.Refresh, contentDescription = "刷新")
-                                }
+                    // v5.1: 大标题栏（对标手机管家），功能按钮保留在同一行右侧
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding()
+                            .padding(start = 20.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            when (tab) {
+                                MainTab.APPS -> "应用检查器"
+                                MainTab.LISTS -> "精简清单"
+                                MainTab.SETTINGS -> "设置"
+                            },
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (tab == MainTab.APPS) {
+                            // 显示系统应用开关（紧凑版）
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    "显示系统应用",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.width(2.dp))
+                                Switch(
+                                    checked = settings.showSystem,
+                                    onCheckedChange = { vm.setShowSystem(it) },
+                                )
                             }
-                        },
-                    )
+                            IconButton(onClick = { vm.refresh() }) {
+                                Icon(Icons.Filled.Refresh, contentDescription = "刷新")
+                            }
+                        }
+                    }
                 }
             },
             bottomBar = {
@@ -338,40 +351,47 @@ fun MainScreen(
                         }
                     }
                 } else {
-                    NavigationBar {
-                        NavigationBarItem(
-                            selected = tab == MainTab.APPS,
-                            onClick = { tab = MainTab.APPS },
-                            icon = {
-                                Icon(
-                                    Icons.Outlined.Apps,
-                                    contentDescription = "应用",
+                    // v6.5: 半透明毛玻璃白胶囊导航（列表从下方透出）
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 84.dp)
+                            .padding(top = 4.dp, bottom = 14.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.White.copy(alpha = 0.72f),
+                            shadowElevation = 8.dp,
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(
+                                    horizontal = 6.dp,
+                                    vertical = 4.dp,
+                                ),
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                PillNavItem(
+                                    selected = tab == MainTab.APPS,
+                                    onClick = { tab = MainTab.APPS },
+                                    icon = Icons.Outlined.Apps,
+                                    label = "应用",
                                 )
-                            },
-                            label = { Text("应用") },
-                        )
-                        NavigationBarItem(
-                            selected = tab == MainTab.LISTS,
-                            onClick = { tab = MainTab.LISTS },
-                            icon = {
-                                Icon(
-                                    Icons.Outlined.PlaylistAddCheck,
-                                    contentDescription = "清单",
+                                PillNavItem(
+                                    selected = tab == MainTab.LISTS,
+                                    onClick = { tab = MainTab.LISTS },
+                                    icon = Icons.Outlined.PlaylistAddCheck,
+                                    label = "清单",
                                 )
-                            },
-                            label = { Text("清单") },
-                        )
-                        NavigationBarItem(
-                            selected = tab == MainTab.SETTINGS,
-                            onClick = { tab = MainTab.SETTINGS },
-                            icon = {
-                                Icon(
-                                    Icons.Outlined.Settings,
-                                    contentDescription = "设置",
+                                PillNavItem(
+                                    selected = tab == MainTab.SETTINGS,
+                                    onClick = { tab = MainTab.SETTINGS },
+                                    icon = Icons.Outlined.Settings,
+                                    label = "设置",
                                 )
-                            },
-                            label = { Text("设置") },
-                        )
+                            }
+                        }
                     }
                 }
             },
@@ -404,7 +424,6 @@ fun MainScreen(
                 )
                 MainTab.SETTINGS -> SettingsTab(
                     vm = vm,
-                    onOpenExtractSettings = onOpenExtractSettings,
                     modifier = Modifier.padding(padding),
                 )
             }
@@ -448,7 +467,7 @@ fun MainScreen(
         AlertDialog(
             onDismissRequest = { vm.showThemeDialog = false },
             shape = DIALOG_SHAPE,
-            title = { Text("深色模式") },
+            title = { DialogHeader("🌙", TileKind.PURPLE, "深色模式") },
             text = {
                 Column {
                     modes.forEach { mode ->
@@ -462,23 +481,27 @@ fun MainScreen(
                                         vm.showThemeDialog = false
                                     },
                                 )
-                                .padding(vertical = 12.dp),
+                                .padding(vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            RadioButton(
-                                selected = settings.themeMode == mode,
-                                onClick = {
-                                    vm.setThemeMode(mode)
-                                    vm.showThemeDialog = false
-                                },
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(vm.themeModeTitle(mode))
+                            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                                RadioButton(
+                                    selected = settings.themeMode == mode,
+                                    onClick = {
+                                        vm.setThemeMode(mode)
+                                        vm.showThemeDialog = false
+                                    },
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Text(vm.themeModeTitle(mode), fontSize = 15.sp)
                         }
                     }
                 }
             },
-            confirmButton = {},
+            confirmButton = {
+                TextButton(onClick = { vm.showThemeDialog = false }) { Text("取消") }
+            },
         )
     }
     if (vm.showExport) {
@@ -486,6 +509,12 @@ fun MainScreen(
             vm = vm,
             onLaunchExport = { fileName -> exportLauncher.launch(fileName) },
             onDismiss = { vm.showExport = false },
+        )
+    }
+    if (vm.showExtractSettings) {
+        ExtractSettingsDialog(
+            vm = vm,
+            onDismiss = { vm.showExtractSettings = false },
         )
     }
     vm.detailEntry?.let { entry ->
@@ -645,7 +674,9 @@ private fun AppListTab(vm: AppViewModel, modifier: Modifier = Modifier) {
                         }
                     }
                 },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .shadow(3.dp, RoundedCornerShape(20.dp)),
             )
             // 排序按钮
             FilledTonalButton(
@@ -656,6 +687,7 @@ private fun AppListTab(vm: AppViewModel, modifier: Modifier = Modifier) {
                 colors = ButtonDefaults.filledTonalButtonColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                 ),
+                elevation = ButtonDefaults.filledTonalButtonElevation(2.dp),
             ) {
                 Icon(Icons.Filled.Sort, contentDescription = "排序", modifier = Modifier.size(20.dp))
             }
@@ -708,7 +740,8 @@ private fun AppListTab(vm: AppViewModel, modifier: Modifier = Modifier) {
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.errorContainer,
                 ),
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(20.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
             ) {
                 Column(Modifier.padding(14.dp)) {
                     Text(
@@ -796,9 +829,10 @@ private fun AppListPage(vm: AppViewModel, filter: AppFilter) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
-                start = 16.dp, end = 16.dp, top = 4.dp, bottom = 88.dp,
+                start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp,
             ),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            // v6.1: 扁平列表，间距由 item 内边距保证，此处不再额外 spacedBy
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             // 建议精简页顶部提示：跟随子筛选显示该等级的具体影响
             if (filter == AppFilter.SUGGEST && !vm.selectMode) {
@@ -842,6 +876,7 @@ private fun AppListPage(vm: AppViewModel, filter: AppFilter) {
 /** 卡片化应用行 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
+/** v6.1: 首页去卡片底纹，改扁平列表 */
 private fun AppCard(
     entry: AppEntry,
     selectMode: Boolean,
@@ -849,72 +884,66 @@ private fun AppCard(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
-    Card(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (checked) MaterialTheme.colorScheme.primaryContainer
-            else MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
-        border = if (checked) androidx.compose.foundation.BorderStroke(
-            2.dp, MaterialTheme.colorScheme.primary
-        ) else null,
+            .background(
+                if (checked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                else Color.Transparent,
+                RoundedCornerShape(16.dp),
+            )
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(horizontal = 4.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (selectMode) {
-                Checkbox(
-                    checked = checked,
-                    onCheckedChange = null,
-                    modifier = Modifier.padding(end = 4.dp),
-                )
-            }
-            AppIcon(entry, modifier = Modifier.size(42.dp))
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    entry.appName,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    "${entry.packageName} · ${formatSize(entry.apkSize)}",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Row(
-                    modifier = Modifier.padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    if (entry.isSystem) {
-                        TinyBadge(
-                            "系统",
-                            MaterialTheme.colorScheme.secondaryContainer,
-                            MaterialTheme.colorScheme.onSecondaryContainer,
-                        )
-                    }
-                    if (!entry.isEnabled) {
-                        TinyBadge(
-                            "已停用",
-                            MaterialTheme.colorScheme.errorContainer,
-                            MaterialTheme.colorScheme.onErrorContainer,
-                        )
-                    }
-                    if (entry.isUninstalled) {
-                        TinyBadge(
-                            "已删除",
-                            MaterialTheme.colorScheme.tertiaryContainer,
-                            MaterialTheme.colorScheme.onTertiaryContainer,
-                        )
-                    }
+        if (selectMode) {
+            Checkbox(
+                checked = checked,
+                onCheckedChange = null,
+                modifier = Modifier.padding(end = 4.dp),
+            )
+        }
+        AppIcon(entry, modifier = Modifier.size(42.dp))
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                entry.appName,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                "${entry.packageName} · ${formatSize(entry.apkSize)}",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Row(
+                modifier = Modifier.padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (entry.isSystem) {
+                    TinyBadge(
+                        "系统",
+                        MaterialTheme.colorScheme.secondaryContainer,
+                        MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+                if (!entry.isEnabled) {
+                    TinyBadge(
+                        "已停用",
+                        MaterialTheme.colorScheme.errorContainer,
+                        MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+                if (entry.isUninstalled) {
+                    TinyBadge(
+                        "已删除",
+                        MaterialTheme.colorScheme.tertiaryContainer,
+                        MaterialTheme.colorScheme.onTertiaryContainer,
+                    )
                 }
             }
         }
@@ -1023,11 +1052,12 @@ private fun SuggestAppCard(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (checked) MaterialTheme.colorScheme.primaryContainer
             else MaterialTheme.colorScheme.surfaceContainerLow,
         ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         border = if (checked) androidx.compose.foundation.BorderStroke(
             2.dp, MaterialTheme.colorScheme.primary
         ) else null,
@@ -1056,7 +1086,7 @@ private fun SuggestAppCard(
                     "${entry.packageName} · ${formatSize(entry.apkSize)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Row(
@@ -1135,6 +1165,97 @@ private fun ShizukuDot(status: ShizukuManager.Status) {
 // ================= 精简清单 Tab =================
 
 /** 分组标题 */
+/** v5.1: 悬浮胶囊导航项（竖排，对齐设计图） */
+@Composable
+private fun PillNavItem(
+    selected: Boolean,
+    onClick: () -> Unit,
+    icon: ImageVector,
+    label: String,
+) {
+    val fg = if (selected) Color(0xFF111111)
+    else MaterialTheme.colorScheme.onSurfaceVariant
+    Surface(
+        onClick = onClick,
+        shape = CircleShape,
+        color = Color.Transparent,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Icon(icon, contentDescription = label, modifier = Modifier.size(20.dp), tint = fg)
+            Spacer(Modifier.height(1.dp))
+            Text(
+                label,
+                fontSize = 10.5.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                color = fg,
+            )
+        }
+    }
+}
+
+/** v5: 品牌蓝渐变主按钮 */
+@Composable
+private fun GradientButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    val brush = if (enabled) brandGradient()
+    else Brush.horizontalGradient(
+        listOf(Color(0xFFE2E5E9), Color(0xFFE2E5E9)),
+    )
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        shape = RoundedCornerShape(15.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color.Transparent,
+            disabledContainerColor = Color.Transparent,
+        ),
+        contentPadding = PaddingValues(0.dp),
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(brush, RoundedCornerShape(15.dp))
+                .padding(vertical = 13.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp,
+            )
+        }
+    }
+}
+
+/** v5: 彩色圆角图标块（emoji 版） */
+@Composable
+private fun TileIcon(
+    emoji: String,
+    kind: TileKind,
+    size: androidx.compose.ui.unit.Dp = 38.dp,
+) {
+    val (bg, _) = tileColors(kind)
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = bg,
+        modifier = Modifier.size(size),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(emoji, fontSize = 18.sp)
+        }
+    }
+}
+
 @Composable
 private fun GroupHeader(text: String) {
     Text(
@@ -1153,13 +1274,247 @@ private fun ContentCard(content: @Composable () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
     ) {
         Column(Modifier.padding(16.dp)) {
             content()
+        }
+    }
+}
+
+/** v6: 清单页工作流步骤条（导入→解析→停用→完成） */
+@Composable
+private fun WorkflowSteps(
+    importDone: Boolean,
+    parseDone: Boolean,
+    disableDone: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val labels = listOf("导入", "解析", "停用", "完成")
+    val doneList = listOf(importDone, parseDone, disableDone, disableDone)
+    val blue = Color(0xFF1B6EF3)
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 28.dp, vertical = 6.dp),
+    ) {
+        // 连接线：4 等分列，圆点中心在 1/8、3/8、5/8、7/8 处
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Spacer(Modifier.weight(0.5f))
+            repeat(3) { i ->
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(2.dp)
+                        .background(
+                            if (doneList[i + 1]) blue else Color(0xFFE4E7EB),
+                            RoundedCornerShape(1.dp),
+                        ),
+                )
+            }
+            Spacer(Modifier.weight(0.5f))
+        }
+        Row(modifier = Modifier.fillMaxWidth()) {
+            labels.forEachIndexed { i, label ->
+                val done = doneList[i]
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    if (done) {
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .background(brandGradient(), CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "✓",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                            )
+                        }
+                    } else {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.White,
+                            border = BorderStroke(2.dp, Color(0xFFE4E7EB)),
+                            modifier = Modifier.size(34.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    "${i + 1}",
+                                    color = Color(0xFFB6BBC2),
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        label,
+                        fontSize = 11.sp,
+                        color = if (done) blue else Color(0xFF8A8F98),
+                        fontWeight = if (done) FontWeight.SemiBold else FontWeight.Normal,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** v6: 解析结果四格统计 */
+@Composable
+private fun ParseStatGrid(
+    onPhone: Int,
+    canDisable: Int,
+    disabled: Int,
+    notFound: Int,
+) {
+    val items = listOf(
+        Triple("$onPhone", "在手机上", null),
+        Triple("$canDisable", "可停用", null),
+        Triple("$disabled", "已停用", Color(0xFF16A34A)),
+        Triple("$notFound", "未找到", null),
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFF8FAF8), RoundedCornerShape(14.dp))
+            .padding(vertical = 12.dp),
+    ) {
+        items.forEachIndexed { i, (num, label, numColor) ->
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(
+                    num,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = numColor ?: MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    label,
+                    fontSize = 11.sp,
+                    color = Color(0xFF8A8F98),
+                )
+            }
+            if (i < items.size - 1) {
+                Box(
+                    modifier = Modifier
+                        .height(28.dp)
+                        .width(1.dp)
+                        .background(Color(0xFFECEEF1)),
+                )
+            }
+        }
+    }
+}
+
+/** v6: 红框删除按钮（描边 + 浅红底） */
+@Composable
+private fun DangerOutlineButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    val red = Color(0xFFDC2626)
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color(0xFFFFFBFB),
+            disabledContainerColor = Color(0xFFF5F5F5),
+            contentColor = red,
+            disabledContentColor = Color(0xFFB6BBC2),
+        ),
+        border = BorderStroke(1.5.dp, if (enabled) Color(0xFFFECACA) else Color(0xFFE4E7EB)),
+        contentPadding = PaddingValues(vertical = 12.dp),
+    ) {
+        Text(text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/** v6: 弹窗图标头（44px 彩色底 + 18px 加粗标题） */
+@Composable
+private fun DialogHeader(
+    emoji: String,
+    kind: TileKind,
+    title: String,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        TileIcon(emoji, kind, 44.dp)
+        Text(
+            title,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.ExtraBold,
+        )
+    }
+}
+
+/** v6.5: 弹窗分区标题（16sp 加粗 + 左侧蓝条） */
+@Composable
+private fun DialogSectionTitle(text: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(top = 14.dp, bottom = 4.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .width(4.dp)
+                .height(18.dp)
+                .background(Color(0xFF1B6EF3), RoundedCornerShape(2.dp)),
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.ExtraBold,
+            letterSpacing = 0.5.sp,
+        )
+    }
+}
+
+/** v6: 小渐变主按钮（用于弹窗确认） */
+@Composable
+private fun MiniGradientButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+        contentPadding = PaddingValues(0.dp),
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 3.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .background(brandGradient(), RoundedCornerShape(12.dp))
+                .padding(horizontal = 22.dp, vertical = 10.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(text, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
         }
     }
 }
@@ -1173,6 +1528,12 @@ private fun DebloatTab(
     var text by remember { mutableStateOf("") }
     val items = vm.debloatItems
     val shizukuReady = vm.shizukuStatus == ShizukuManager.Status.Ready
+    // v6: 工作流进度推导
+    val importDone = text.isNotBlank() || items.isNotEmpty()
+    val parseDone = items.isNotEmpty()
+    val canDisablePreview = items.mapNotNull { it.entry }
+        .filter { it.isEnabled && !it.isUninstalled }
+    val disableDone = parseDone && canDisablePreview.isEmpty()
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -1180,6 +1541,13 @@ private fun DebloatTab(
             .padding(vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        // v6: 工作流步骤条
+        WorkflowSteps(
+            importDone = importDone,
+            parseDone = parseDone,
+            disableDone = disableDone,
+        )
+
         // OTA 恢复提醒（有才显示）
         if (vm.restoredApps.isNotEmpty()) {
             Card(
@@ -1221,15 +1589,7 @@ private fun DebloatTab(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.size(38.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text("📋", fontSize = 18.sp)
-                    }
-                }
+                TileIcon("📋", TileKind.BLUE)
                 Column(Modifier.weight(1f)) {
                     Text(
                         "从文本导入",
@@ -1264,11 +1624,11 @@ private fun DebloatTab(
                 )
             }
             Spacer(Modifier.height(10.dp))
-            Button(
+            GradientButton(
+                text = "解析清单",
                 onClick = { vm.parseDebloatList(text) },
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-            ) { Text("解析清单") }
+            )
         }
 
         // 解析结果：折叠卡片
@@ -1290,22 +1650,13 @@ private fun DebloatTab(
                             .clickable { expanded = !expanded },
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        TileIcon("📊", TileKind.GREEN)
+                        Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text(
                                 "解析结果 ${items.size} 个",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.SemiBold,
-                            )
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                buildString {
-                                    append("$onPhone 在手机上")
-                                    if (canDisable.isNotEmpty()) append(" · ${canDisable.size} 可停用")
-                                    if (disabledCount > 0) append(" · $disabledCount 已停用")
-                                    if (notFound > 0) append(" · $notFound 未找到")
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         Icon(
@@ -1314,29 +1665,31 @@ private fun DebloatTab(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    // v6: 四格统计
+                    ParseStatGrid(
+                        onPhone = onPhone,
+                        canDisable = canDisable.size,
+                        disabled = disabledCount,
+                        notFound = notFound,
+                    )
                     // 操作按钮：始终可见
                     if (shizukuReady) {
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            FilledTonalButton(
+                            GradientButton(
+                                text = "停用全部(${canDisable.size})",
                                 onClick = { vm.batchSetEnabled(canDisable, false) },
                                 enabled = canDisable.isNotEmpty() && vm.progress == null,
                                 modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(14.dp),
-                            ) { Text("停用全部(${canDisable.size})") }
-                            OutlinedButton(
+                            )
+                            DangerOutlineButton(
+                                text = "删除全部(${canDelete.size})",
                                 onClick = { vm.confirmBatchDelete = canDelete },
                                 enabled = canDelete.isNotEmpty() && vm.progress == null,
                                 modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(14.dp),
-                            ) {
-                                Text(
-                                    "删除全部(${canDelete.size})",
-                                    color = MaterialTheme.colorScheme.error,
-                                )
-                            }
+                            )
                         }
                     } else {
                         TextButton(onClick = { vm.showShizukuDialog = true }) {
@@ -1409,10 +1762,11 @@ private fun DebloatTab(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp),
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(22.dp),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
             ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         ) {
             Column {
                 Row(
@@ -1423,7 +1777,7 @@ private fun DebloatTab(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Text("📤", fontSize = 18.sp)
+                    TileIcon("📤", TileKind.GREEN, 34.dp)
                     Text(
                         "导出 ADB 脚本",
                         style = MaterialTheme.typography.bodyMedium,
@@ -1442,7 +1796,7 @@ private fun DebloatTab(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Text("🔄", fontSize = 18.sp)
+                    TileIcon("🔄", TileKind.ORANGE, 34.dp)
                     Column(Modifier.weight(1f)) {
                         Text(
                             "OTA 恢复检测",
@@ -1458,7 +1812,7 @@ private fun DebloatTab(
                 }
             }
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(16.dp))
     }
 }
 
@@ -1491,10 +1845,11 @@ private fun AutoDisableSection(vm: AppViewModel) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp),
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
             ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
             onClick = { vm.showAutoDisableDetail = true },
         ) {
             Row(
@@ -1514,7 +1869,7 @@ private fun AutoDisableSection(vm: AppViewModel) {
                             RoundedCornerShape(2.dp),
                         ),
                 )
-                Text("♿", fontSize = 18.sp)
+                TileIcon("♿", TileKind.ORANGE, 36.dp)
                 Column(Modifier.weight(1f)) {
                     Text(
                         "无障碍自动停用",
@@ -1538,10 +1893,11 @@ private fun AutoDisableSection(vm: AppViewModel) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp),
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(22.dp),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.tertiaryContainer,
             ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
             border = androidx.compose.foundation.BorderStroke(
                 1.dp, MaterialTheme.colorScheme.tertiary
             ),
@@ -1551,7 +1907,7 @@ private fun AutoDisableSection(vm: AppViewModel) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Text("♿", fontSize = 20.sp)
+                    TileIcon("♿", TileKind.ORANGE, 36.dp)
                     Column(Modifier.weight(1f)) {
                         Text(
                             "无障碍自动停用",
@@ -1647,11 +2003,11 @@ private fun AutoDisableSection(vm: AppViewModel) {
                             )
                         }
                         Spacer(Modifier.height(10.dp))
-                        Button(
+                        GradientButton(
+                            text = "开始自动停用（${pending.size}）",
                             onClick = { vm.autoDisablePending() },
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(14.dp),
-                        ) { Text("开始自动停用（${pending.size}）") }
+                        )
                     }
                 }
             }
@@ -1667,60 +2023,72 @@ private fun AutoDisableDetailDialog(vm: AppViewModel, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         shape = DIALOG_SHAPE,
-        title = { Text("无障碍自动停用") },
+        title = { DialogHeader("♿", TileKind.ORANGE, "无障碍自动停用") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
                     "批量停用被系统拒绝的应用会自动记录在这里。无障碍服务逐个打开系统详情页并点击「停用」，全程无需手动操作。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 20.sp,
                 )
+                // v6: 状态行卡片化
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            MaterialTheme.colorScheme.surfaceContainerLowest,
+                            RoundedCornerShape(14.dp),
+                        )
+                        .padding(14.dp),
                 ) {
                     Text(
                         "解锁组件",
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f),
                     )
-                    TinyBadge(
+                    Text(
                         if (vm.unlockPkgInstalled) "已安装" else "未安装",
-                        if (vm.unlockPkgInstalled) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceVariant,
-                        if (vm.unlockPkgInstalled) MaterialTheme.colorScheme.onPrimaryContainer
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (vm.unlockPkgInstalled) Color(0xFF16A34A) else Color(0xFFD97706),
                     )
                     if (!vm.unlockPkgInstalled) {
-                        Spacer(Modifier.width(8.dp))
-                        FilledTonalButton(
+                        Spacer(Modifier.width(10.dp))
+                        MiniGradientButton(
+                            text = "安装",
                             onClick = { vm.installUnlockPkg(context) },
-                            shape = RoundedCornerShape(12.dp),
-                        ) { Text("安装") }
+                        )
                     }
                 }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            MaterialTheme.colorScheme.surfaceContainerLowest,
+                            RoundedCornerShape(14.dp),
+                        )
+                        .padding(14.dp),
                 ) {
                     Text(
                         "无障碍权限",
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f),
                     )
-                    TinyBadge(
+                    Text(
                         if (vm.accessibilityEnabled) "已开启" else "未开启",
-                        if (vm.accessibilityEnabled) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceVariant,
-                        if (vm.accessibilityEnabled) MaterialTheme.colorScheme.onPrimaryContainer
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (vm.accessibilityEnabled) Color(0xFF16A34A) else Color(0xFFD97706),
                     )
                     if (!vm.accessibilityEnabled) {
-                        Spacer(Modifier.width(8.dp))
-                        FilledTonalButton(
+                        Spacer(Modifier.width(10.dp))
+                        MiniGradientButton(
+                            text = "去开启",
                             onClick = { vm.openAccessibilitySettings() },
-                            shape = RoundedCornerShape(12.dp),
-                        ) { Text("去开启") }
+                        )
                     }
                 }
             }
@@ -1816,20 +2184,77 @@ private fun SortBottomSheet(vm: AppViewModel, onDismiss: () -> Unit) {
 @Composable
 private fun SettingsTab(
     vm: AppViewModel,
-    onOpenExtractSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val settings by vm.settings.collectAsState()
+    val context = LocalContext.current
+    val versionName = remember {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                context.packageManager.getPackageInfo(
+                    context.packageName,
+                    android.content.pm.PackageManager.PackageInfoFlags.of(0),
+                ).versionName
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName
+            }
+        } catch (e: Exception) {
+            null
+        } ?: "0.0.2"
+    }
     Column(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(vertical = 8.dp),
     ) {
+        // v6: 蓝渐变应用头
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            shape = RoundedCornerShape(22.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(brandGradient())
+                    .padding(18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color.White.copy(alpha = 0.2f),
+                    modifier = Modifier.size(52.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("📱", fontSize = 26.sp)
+                    }
+                }
+                Column {
+                    Text(
+                        "应用检查器",
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        "v$versionName · dev.appinspector",
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+        }
         GroupHeader("常用")
         SettingsCard {
             SettingsRow(
                 icon = Icons.Filled.Terminal,
+                tileKind = TileKind.BLUE,
                 title = "Shizuku",
                 subtitle = when (vm.shizukuStatus) {
                     ShizukuManager.Status.Ready -> "已连接 · 可停用/删除/终端"
@@ -1850,6 +2275,7 @@ private fun SettingsTab(
         SettingsCard {
             SettingsRow(
                 icon = Icons.Filled.Share,
+                tileKind = TileKind.GREEN,
                 title = "导出列表",
                 subtitle = "CSV / Markdown / JSON",
                 onClick = { vm.showExport = true },
@@ -1857,9 +2283,10 @@ private fun SettingsTab(
             )
             SettingsRow(
                 icon = Icons.Outlined.Settings,
+                tileKind = TileKind.ORANGE,
                 title = "提取设置",
                 subtitle = "保存目录 · 文件命名",
-                onClick = onOpenExtractSettings,
+                onClick = { vm.showExtractSettings = true },
             )
         }
 
@@ -1867,6 +2294,7 @@ private fun SettingsTab(
         SettingsCard {
             SettingsRow(
                 icon = Icons.Filled.DarkMode,
+                tileKind = TileKind.PURPLE,
                 title = "深色模式",
                 subtitle = vm.themeModeTitle(settings.themeMode),
                 onClick = { vm.showThemeDialog = true },
@@ -1883,10 +2311,11 @@ private fun SettingsCard(content: @Composable () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
     ) {
         Column(Modifier.padding(vertical = 4.dp)) {
             content()
@@ -1896,13 +2325,15 @@ private fun SettingsCard(content: @Composable () -> Unit) {
 
 @Composable
 private fun SettingsRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     title: String,
     subtitle: String? = null,
     trailing: @Composable (() -> Unit)? = null,
     showDivider: Boolean = false,
     onClick: () -> Unit,
+    tileKind: TileKind = TileKind.BLUE,
 ) {
+    val (tileBg, tileTint) = tileColors(tileKind)
     Column {
         Row(
             modifier = Modifier
@@ -1913,14 +2344,14 @@ private fun SettingsRow(
         ) {
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.primaryContainer,
+                color = tileBg,
                 modifier = Modifier.size(38.dp),
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         icon,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        tint = tileTint,
                         modifier = Modifier.size(20.dp),
                     )
                 }
@@ -2530,10 +2961,10 @@ private fun ExportDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         shape = DIALOG_SHAPE,
-        title = { Text("导出应用信息") },
+        title = { DialogHeader("📤", TileKind.GREEN, "导出应用信息") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text("字段", style = MaterialTheme.typography.titleSmall)
+                DialogSectionTitle("字段")
                 ALL_EXPORT_FIELDS.forEach { f ->
                     Row(
                         modifier = Modifier
@@ -2544,60 +2975,165 @@ private fun ExportDialog(
                                     checked = if (f.key in checked) checked - f.key else checked + f.key
                                 },
                             )
-                            .padding(vertical = 2.dp),
+                            .padding(start = 18.dp, top = 8.dp, bottom = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Checkbox(
                             checked = f.key in checked,
                             onCheckedChange = null,
                         )
-                        Text(f.title, modifier = Modifier.padding(start = 8.dp))
+                        Text(f.title, modifier = Modifier.padding(start = 12.dp), fontSize = 15.sp)
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                Text("格式", style = MaterialTheme.typography.titleSmall)
+                DialogSectionTitle("格式")
                 ExportFormat.entries.forEach { ef ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .selectable(selected = format == ef, onClick = { format = ef })
-                            .padding(vertical = 2.dp),
+                            .padding(start = 18.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        RadioButton(selected = format == ef, onClick = { format = ef })
-                        Text(ef.title, modifier = Modifier.padding(start = 8.dp))
+                        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                            RadioButton(selected = format == ef, onClick = { format = ef })
+                        }
+                        Text(ef.title, modifier = Modifier.padding(start = 12.dp), fontSize = 15.sp)
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                Text("范围", style = MaterialTheme.typography.titleSmall)
+                DialogSectionTitle("范围")
                 listOf(false to "当前列表（$currentCount 个）", true to "全部应用（$totalCount 个）")
                     .forEach { (all, label) ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .selectable(selected = scopeAll == all, onClick = { scopeAll = all })
-                                .padding(vertical = 2.dp),
+                                .padding(start = 18.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            RadioButton(selected = scopeAll == all, onClick = { scopeAll = all })
-                            Text(label, modifier = Modifier.padding(start = 8.dp))
+                            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                                RadioButton(selected = scopeAll == all, onClick = { scopeAll = all })
+                            }
+                            Text(label, modifier = Modifier.padding(start = 12.dp), fontSize = 15.sp)
                         }
                     }
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                vm.exportFields = ALL_EXPORT_FIELDS
-                    .filter { it.key in checked }
-                    .map { it.key }
-                vm.exportFormat = format
-                vm.exportScopeAll = scopeAll
-                onDismiss()
-                onLaunchExport(vm.exportFileName())
-            }) { Text("导出") }
+            MiniGradientButton(
+                text = "导出",
+                onClick = {
+                    vm.exportFields = ALL_EXPORT_FIELDS
+                        .filter { it.key in checked }
+                        .map { it.key }
+                    vm.exportFormat = format
+                    vm.exportScopeAll = scopeAll
+                    onDismiss()
+                    onLaunchExport(vm.exportFileName())
+                },
+            )
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }
         },
     )
 }
+
+/** v6.1: 提取设置改弹窗（原独立页面） */
+@Composable
+private fun ExtractSettingsDialog(
+    vm: AppViewModel,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val settings by vm.settings.collectAsState()
+    val dirLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val label = runCatching {
+                androidx.documentfile.provider.DocumentFile.fromTreeUri(context, uri)?.name
+                    ?: uri.toString()
+            }.getOrDefault(uri.toString())
+            vm.onDirPicked(context, uri, label)
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = DIALOG_SHAPE,
+        title = { DialogHeader("⚙️", TileKind.ORANGE, "提取设置") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("存放路径", style = MaterialTheme.typography.titleSmall)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        settings.extractPathLabel.ifBlank { "未选择（首次提取时选择）" },
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    MiniGradientButton(
+                        text = "更改",
+                        onClick = { dirLauncher.launch(null) },
+                    )
+                }
+                Text("命名表达式", style = MaterialTheme.typography.titleSmall)
+                androidx.compose.material3.OutlinedTextField(
+                    value = settings.namingExpr,
+                    onValueChange = { vm.setNaming(it) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                )
+                Text(
+                    "{A} 应用名称　{V} 版本名称\n{P} 应用包名　{C} 版本号",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "预览：${dev.appinspector.extract.buildApkFileName(previewEntry, settings.namingExpr)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("包含拆分包", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "部分应用（如抖音）由多个 split APK 组成，开启后一并复制",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    androidx.compose.material3.Switch(
+                        checked = settings.includeSplits,
+                        onCheckedChange = { vm.setIncludeSplits(it) },
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("完成") }
+        },
+    )
+}
+
+private val previewEntry = dev.appinspector.data.AppEntry(
+    packageName = "com.tencent.mm",
+    appName = "微信",
+    versionName = "8.0.60",
+    versionCode = 90120,
+    apkSize = 0,
+    firstInstallTime = 0,
+    lastUpdateTime = 0,
+    isSystem = false,
+    isUpdatedSystemApp = false,
+    isEnabled = true,
+    sourceDir = null,
+    splitSourceDirs = emptyList(),
+    applicationInfo = android.content.pm.ApplicationInfo(),
+)
