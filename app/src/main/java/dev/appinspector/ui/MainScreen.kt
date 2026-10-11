@@ -17,6 +17,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
@@ -37,6 +39,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.runtime.CompositionLocalProvider
@@ -351,23 +354,29 @@ fun MainScreen(
                         }
                     }
                 } else {
-                    // v6.5: 半透明毛玻璃白胶囊导航（列表从下方透出）
+                    // v6.5: 半透明毛玻璃胶囊导航（列表从下方透出），颜色跟随深浅主题
+                    val isDarkNav = when (settings.themeMode) {
+                        "light" -> false
+                        "dark" -> true
+                        else -> isSystemInDarkTheme()
+                    }
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 84.dp)
-                            .padding(top = 4.dp, bottom = 14.dp),
+                            .padding(horizontal = 56.dp)
+                            .padding(top = 6.dp, bottom = 16.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Surface(
                             shape = CircleShape,
-                            color = Color.White.copy(alpha = 0.72f),
+                            color = if (isDarkNav) Color(0xFF23262B).copy(alpha = 0.72f)
+                            else Color.White.copy(alpha = 0.72f),
                             shadowElevation = 8.dp,
                         ) {
                             Row(
                                 modifier = Modifier.padding(
-                                    horizontal = 6.dp,
-                                    vertical = 4.dp,
+                                    horizontal = 10.dp,
+                                    vertical = 8.dp,
                                 ),
                                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -377,18 +386,21 @@ fun MainScreen(
                                     onClick = { tab = MainTab.APPS },
                                     icon = Icons.Outlined.Apps,
                                     label = "应用",
+                                    isDark = isDarkNav,
                                 )
                                 PillNavItem(
                                     selected = tab == MainTab.LISTS,
                                     onClick = { tab = MainTab.LISTS },
                                     icon = Icons.Outlined.PlaylistAddCheck,
                                     label = "清单",
+                                    isDark = isDarkNav,
                                 )
                                 PillNavItem(
                                     selected = tab == MainTab.SETTINGS,
                                     onClick = { tab = MainTab.SETTINGS },
                                     icon = Icons.Outlined.Settings,
                                     label = "设置",
+                                    isDark = isDarkNav,
                                 )
                             }
                         }
@@ -1172,23 +1184,25 @@ private fun PillNavItem(
     onClick: () -> Unit,
     icon: ImageVector,
     label: String,
+    isDark: Boolean = isSystemInDarkTheme(),
 ) {
-    val fg = if (selected) Color(0xFF111111)
-    else MaterialTheme.colorScheme.onSurfaceVariant
+    val fg = if (selected) {
+        if (isDark) Color.White else Color(0xFF111111)
+    } else MaterialTheme.colorScheme.onSurfaceVariant
     Surface(
         onClick = onClick,
         shape = CircleShape,
         color = Color.Transparent,
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 13.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Icon(icon, contentDescription = label, modifier = Modifier.size(20.dp), tint = fg)
-            Spacer(Modifier.height(1.dp))
+            Icon(icon, contentDescription = label, modifier = Modifier.size(24.dp), tint = fg)
+            Spacer(Modifier.height(2.dp))
             Text(
                 label,
-                fontSize = 10.5.sp,
+                fontSize = 12.sp,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                 color = fg,
             )
@@ -2399,10 +2413,19 @@ private fun TerminalScreen(vm: AppViewModel, onBack: () -> Unit) {
         }
     }
     val connected = vm.shizukuStatus == ShizukuManager.Status.Ready
+    var showGuide by remember { mutableStateOf(false) }
+    // v6.6: 快捷命令
+    val quickCmds = listOf("pm list packages", "dumpsys battery", "pm list packages -d")
+    fun submit() {
+        if (input.isNotBlank()) {
+            vm.execTerminalCommand(input)
+            input = ""
+        }
+    }
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Shizuku 终端") },
+                title = { Text("Shizuku 终端", fontWeight = FontWeight.ExtraBold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Filled.Close, contentDescription = "返回")
@@ -2414,7 +2437,7 @@ private fun TerminalScreen(vm: AppViewModel, onBack: () -> Unit) {
                         if (connected) Color(0xFFD3F8D3) else MaterialTheme.colorScheme.errorContainer,
                         if (connected) Color(0xFF0A5C0A) else MaterialTheme.colorScheme.onErrorContainer,
                     )
-                    Spacer(Modifier.width(4.dp))
+                    TextButton(onClick = { showGuide = true }) { Text("\uD83D\uDCD6 指南") }
                     TextButton(onClick = { vm.clearTerminal() }) { Text("清屏") }
                 },
             )
@@ -2423,85 +2446,384 @@ private fun TerminalScreen(vm: AppViewModel, onBack: () -> Unit) {
         Column(
             modifier = Modifier
                 .padding(padding)
-                .fillMaxSize()
-                .padding(horizontal = 16.dp),
+                .fillMaxSize(),
         ) {
+            // v6.6: 精简为一行说明
             Text(
-                "以 shell 身份执行命令（pm / cmd / dumpsys …）。多条命令用 ; 分隔批量执行，不支持管道与重定向",
+                "以 shell 身份执行命令，多条用 ; 分隔批量执行",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(vertical = 4.dp),
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
             )
-            Surface(
-                color = Color(0xFF0D1117),
-                shape = RoundedCornerShape(16.dp),
+            // v6.6: 快捷命令 chips（横向滑动，不换行）
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                quickCmds.forEach { cmd ->
+                    Surface(
+                        onClick = { input = cmd },
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        shadowElevation = 1.dp,
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            MaterialTheme.colorScheme.outlineVariant,
+                        ),
+                    ) {
+                        Text(
+                            cmd,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        )
+                    }
+                }
+            }
+            // v6.6: 终端控制台
+            Surface(
+                color = Color(0xFF0D1117),
+                shape = RoundedCornerShape(18.dp),
+                shadowElevation = 4.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(horizontal = 16.dp),
             ) {
                 if (vm.terminalLines.isEmpty()) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(
-                            "输入命令开始，例如：\npm list packages\npm disable-user --user 0 <包名>",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = Color(0xFF8B949E),
-                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                "$",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 32.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF3FB950),
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "输入命令开始，或点上方快捷命令",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = Color(0xFF8B949E),
+                            )
+                        }
                     }
                 } else {
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
                         items(vm.terminalLines) { line ->
-                            Text(
-                                line.text,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = when {
-                                    line.isError -> Color(0xFFFF7B72)
-                                    line.isCommand -> Color(0xFF79C0FF)
-                                    else -> Color(0xFFC9D1D9)
-                                },
-                            )
+                            when {
+                                line.isStatus -> {
+                                    // v6.6: 状态行 ✓/✗
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            if (line.statusOk) "✓" else "✗",
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (line.statusOk) Color(0xFF3FB950)
+                                            else Color(0xFFFF7B72),
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            line.text,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 11.sp,
+                                            color = if (line.statusOk) Color(0xFF3FB950)
+                                            else Color(0xFFFF7B72),
+                                        )
+                                    }
+                                }
+                                line.isCommand -> {
+                                    // v6.6: 命令行，$ 单独绿色
+                                    Row {
+                                        Text(
+                                            "$ ",
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF3FB950),
+                                        )
+                                        Text(
+                                            line.text.removePrefix("$ ").removePrefix("$"),
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 12.sp,
+                                            color = Color(0xFF79C0FF),
+                                        )
+                                    }
+                                }
+                                else -> {
+                                    Text(
+                                        line.text,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = if (line.isError) Color(0xFFFF7B72)
+                                        else Color(0xFFC9D1D9),
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
+            // v6.6: 输入栏（$ 前缀 + 圆形渐变发送键），imePadding 避开键盘
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(bottom = 16.dp),
+                modifier = Modifier
+                    .imePadding()
+                    .padding(start = 16.dp, end = 16.dp, bottom = 18.dp),
             ) {
                 OutlinedTextField(
                     value = input,
                     onValueChange = { input = it },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    leadingIcon = {
+                        Text(
+                            "$",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF3FB950),
+                            fontSize = 15.sp,
+                        )
+                    },
+                    placeholder = {
+                        Text(
+                            "输入 shell 命令…",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp,
+                        )
+                    },
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp,
+                    ),
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                         imeAction = androidx.compose.ui.text.input.ImeAction.Send,
                     ),
                     keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                        onSend = {
-                            vm.execTerminalCommand(input)
-                            input = ""
-                        },
+                        onSend = { submit() },
                     ),
                 )
-                Spacer(Modifier.width(8.dp))
-                Button(
-                    onClick = {
-                        vm.execTerminalCommand(input)
-                        input = ""
-                    },
-                    enabled = !vm.terminalRunning,
-                    shape = RoundedCornerShape(16.dp),
-                ) { Text("执行") }
+                Spacer(Modifier.width(10.dp))
+                // v6.6: 圆形渐变发送按钮
+                Surface(
+                    onClick = { submit() },
+                    shape = CircleShape,
+                    color = Color.Transparent,
+                    modifier = Modifier.size(50.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                brandGradient(),
+                                CircleShape,
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "➤",
+                            color = Color.White,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // v6.6: 命令指南底部弹窗
+    if (showGuide) {
+        CommandGuideSheet(
+            onDismiss = { showGuide = false },
+            onFill = { cmd ->
+                input = cmd
+                showGuide = false
+            },
+        )
+    }
+}
+
+
+/** v6.6: 命令指南数据 */
+private data class GuideCmd(val code: String, val desc: String)
+private data class GuideCat(val name: String, val cmds: List<GuideCmd>)
+
+private val guideCats = listOf(
+    GuideCat(
+        "应用管理", listOf(
+            GuideCmd("pm list packages", "列出所有已安装应用的包名；加 -d 只看已停用的，加 -s 只看系统的"),
+            GuideCmd("pm disable-user --user 0 <包名>", "停用应用（把 <包名> 换成实际包名）。部分系统保护应用会被静默拒绝"),
+            GuideCmd("pm enable <包名>", "重新启用被停用的应用"),
+            GuideCmd("pm uninstall --user 0 <包名>", "卸载应用（系统应用仅对当前用户卸载，可恢复）。谨慎操作"),
+            GuideCmd("pm clear <包名>", "清除应用数据（恢复出厂状态）。会删除该应用数据"),
+            GuideCmd("pm install-existing --user 0 <包名>", "恢复之前卸载的系统应用"),
+        )
+    ),
+    GuideCat(
+        "系统信息", listOf(
+            GuideCmd("dumpsys meminfo <包名>", "查看指定应用的内存占用详情"),
+            GuideCmd("dumpsys package <包名>", "查看应用的详细信息（权限、版本、安装路径等）"),
+            GuideCmd("dumpsys display", "查看屏幕显示相关信息"),
+            GuideCmd("getprop ro.build.version.release", "查看 Android 系统版本号"),
+        )
+    ),
+    GuideCat(
+        "电池显示", listOf(
+            GuideCmd("dumpsys battery", "查看电池状态（电量、温度、充电状态等）"),
+            GuideCmd("cmd statusbar expand-notifications", "展开通知栏"),
+            GuideCmd("cmd statusbar collapse", "收起通知栏/状态栏面板"),
+        )
+    ),
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CommandGuideSheet(onDismiss: () -> Unit, onFill: (String) -> Unit) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var catIdx by remember { mutableStateOf(0) }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(bottom = 12.dp),
+        ) {
+            Text(
+                "📖 命令指南",
+                fontSize = 17.sp,
+                fontWeight = FontWeight.ExtraBold,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+            )
+            Text(
+                "点「填入」把命令送到输入框，改好包名再执行",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 10.dp),
+            )
+            // 分类 Tab
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                guideCats.forEachIndexed { i, cat ->
+                    val selected = i == catIdx
+                    Surface(
+                        onClick = { catIdx = i },
+                        shape = RoundedCornerShape(18.dp),
+                        color = if (selected) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                    ) {
+                        Text(
+                            cat.name,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (selected) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                        )
+                    }
+                }
+            }
+            // 命令列表
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 380.dp)
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(guideCats[catIdx].cmds) { cmd ->
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                        ),
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    cmd.code,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .background(
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                                            RoundedCornerShape(8.dp),
+                                        )
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Surface(
+                                    onClick = { onFill(cmd.code) },
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = Color.Transparent,
+                                    modifier = Modifier.background(
+                                        brandGradient(),
+                                        RoundedCornerShape(14.dp),
+                                    ),
+                                ) {
+                                    Text(
+                                        "填入",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                    )
+                                }
+                            }
+                            Text(
+                                cmd.desc,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                lineHeight = 17.sp,
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                        }
+                    }
+                }
+            }
+            // 底部提示
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFFFEF3E2),
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
+            ) {
+                Text(
+                    "⚠️ shell 身份限制：不支持管道 |、重定向 >；组件级操作会被系统拒绝",
+                    fontSize = 11.5.sp,
+                    color = Color(0xFF9A6700),
+                    lineHeight = 16.sp,
+                    modifier = Modifier.padding(10.dp),
+                )
             }
         }
     }
