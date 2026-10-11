@@ -1,8 +1,11 @@
 package dev.appinspector.ui
 
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.view.WindowManager
 import android.widget.Toast
+import dev.appinspector.accessibility.AutoDisableState
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -14,6 +17,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -56,6 +63,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -89,6 +97,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -167,6 +177,8 @@ fun MainScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 vm.refreshUsagePerm()
                 vm.refreshShizukuStatus()
+                vm.refreshUnlockPkg()
+                vm.refreshAccessibility()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -192,6 +204,11 @@ fun MainScreen(
                         navigationIcon = {
                             IconButton(onClick = { vm.exitSelectMode() }) {
                                 Icon(Icons.Filled.Close, contentDescription = "取消多选")
+                            }
+                        },
+                        actions = {
+                            TextButton(onClick = { vm.selectAll(vm.currentList()) }) {
+                                Text("全选")
                             }
                         },
                     )
@@ -420,6 +437,12 @@ fun MainScreen(
     if (vm.showShizukuDialog) {
         ShizukuDialog(vm = vm, onDismiss = { vm.showShizukuDialog = false })
     }
+    if (vm.showAutoDisableDetail) {
+        AutoDisableDetailDialog(vm = vm, onDismiss = { vm.showAutoDisableDetail = false })
+    }
+    if (vm.showSortSheet) {
+        SortBottomSheet(vm = vm, onDismiss = { vm.showSortSheet = false })
+    }
     if (vm.showThemeDialog) {
         val modes = listOf("system", "light", "dark")
         AlertDialog(
@@ -457,9 +480,6 @@ fun MainScreen(
             },
             confirmButton = {},
         )
-    }
-    if (vm.showSort) {
-        SortDialog(vm = vm, onDismiss = { vm.showSort = false })
     }
     if (vm.showExport) {
         ExportDialog(
@@ -595,29 +615,60 @@ private fun AppListTab(vm: AppViewModel, modifier: Modifier = Modifier) {
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        // 搜索框（填充式无边框）
-        androidx.compose.material3.TextField(
-            value = vm.search,
-            onValueChange = { vm.search = it },
-            placeholder = { Text("搜索应用名称 / 包名") },
-            singleLine = true,
-            shape = RoundedCornerShape(28.dp),
-            colors = androidx.compose.material3.TextFieldDefaults.colors(
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent,
-            ),
-            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-            trailingIcon = {
-                if (vm.search.isNotEmpty()) {
-                    IconButton(onClick = { vm.search = "" }) {
-                        Icon(Icons.Filled.Close, contentDescription = "清空")
-                    }
-                }
-            },
+        // 搜索框（填充式无边框）+ 排序按钮
+        val isDefaultSort = settings.sortKey == SortKey.NAME && settings.sortAsc
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
-        )
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            androidx.compose.material3.TextField(
+                value = vm.search,
+                onValueChange = { vm.search = it },
+                placeholder = { Text("搜索应用名称 / 包名", fontSize = 13.sp) },
+                singleLine = true,
+                shape = RoundedCornerShape(20.dp),
+                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
+                colors = androidx.compose.material3.TextFieldDefaults.colors(
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                ),
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                trailingIcon = {
+                    if (vm.search.isNotEmpty()) {
+                        IconButton(onClick = { vm.search = "" }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Filled.Close, contentDescription = "清空", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                },
+                modifier = Modifier.weight(1f),
+            )
+            // 排序按钮
+            FilledTonalButton(
+                onClick = { vm.showSortSheet = true },
+                shape = CircleShape,
+                contentPadding = PaddingValues(0.dp),
+                modifier = Modifier.size(40.dp),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                ),
+            ) {
+                Icon(Icons.Filled.Sort, contentDescription = "排序", modifier = Modifier.size(20.dp))
+            }
+        }
+        // 当前排序小字（SortKey.title 自带"按"字）
+        if (!isDefaultSort) {
+            Text(
+                "${settings.sortKey.title} · ${if (settings.sortAsc) "升序" else "降序"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 24.dp),
+            )
+        }
 
         // 4 个文字 Tab（均匀分布，带个数）
         FilterTabRow(
@@ -708,7 +759,9 @@ private fun AppListTab(vm: AppViewModel, modifier: Modifier = Modifier) {
 @Composable
 private fun AppListPage(vm: AppViewModel, filter: AppFilter) {
     val context = LocalContext.current
-    val baseList = vm.listFor(filter)
+    // 订阅 settings，排序/显示系统应用变化时自动重组刷新
+    val settings by vm.settings.collectAsState()
+    val baseList = remember(settings, filter, vm.search) { vm.listFor(filter) }
     // 建议精简页叠加子筛选（按 UAD 建议等级）
     val sub = vm.suggestSubFilter
     val list = remember(baseList, sub, filter) {
@@ -800,7 +853,7 @@ private fun AppCard(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (checked) MaterialTheme.colorScheme.primaryContainer
             else MaterialTheme.colorScheme.surfaceContainerLow,
@@ -810,7 +863,7 @@ private fun AppCard(
         ) else null,
     ) {
         Row(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (selectMode) {
@@ -820,25 +873,26 @@ private fun AppCard(
                     modifier = Modifier.padding(end = 4.dp),
                 )
             }
-            AppIcon(entry, modifier = Modifier.size(46.dp))
-            Spacer(Modifier.width(12.dp))
+            AppIcon(entry, modifier = Modifier.size(42.dp))
+            Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     entry.appName,
-                    style = MaterialTheme.typography.titleSmall,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     "${entry.packageName} · ${formatSize(entry.apkSize)}",
-                    style = MaterialTheme.typography.bodySmall,
+                    fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Row(
-                    modifier = Modifier.padding(top = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     if (entry.isSystem) {
                         TinyBadge(
@@ -884,27 +938,26 @@ private fun FilterTabRow(
                 modifier = Modifier
                     .weight(1f)
                     .clickable { onSelect(i) }
-                    .padding(vertical = 10.dp),
+                    .padding(vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
                     "$label ${counts.getOrNull(i) ?: 0}",
-                    style = if (selected) MaterialTheme.typography.titleSmall
-                    else MaterialTheme.typography.bodyMedium,
+                    fontSize = 13.sp,
                     color = if (selected) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = if (selected) androidx.compose.ui.text.font.FontWeight.Bold else null,
+                    fontWeight = if (selected) FontWeight.Bold else null,
                     maxLines = 1,
                 )
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(3.dp))
                 Box(
                     modifier = Modifier
-                        .width(20.dp)
-                        .height(3.dp)
+                        .width(18.dp)
+                        .height(2.dp)
                         .background(
                             if (selected) MaterialTheme.colorScheme.primary
                             else Color.Transparent,
-                            RoundedCornerShape(2.dp),
+                            RoundedCornerShape(1.dp),
                         ),
                 )
             }
@@ -1125,14 +1178,14 @@ private fun DebloatTab(
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // OTA 状态卡
+        // OTA 恢复提醒（有才显示）
         if (vm.restoredApps.isNotEmpty()) {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                    .padding(horizontal = 16.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.errorContainer,
                 ),
@@ -1161,86 +1214,108 @@ private fun DebloatTab(
             }
         }
 
-        GroupHeader("导入")
+        // 导入：核心 workflow 置顶
         ContentCard {
-            Text(
-                "从文本导入",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "每行一个包名（# 开头为注释），解析后可批量停用/删除",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier.size(38.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("📋", fontSize = 18.sp)
+                    }
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "从文本导入",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        "支持包名 / pm 命令 / adb 命令，自动提取",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
             OutlinedTextField(
                 value = text,
                 onValueChange = { text = it },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(120.dp),
-                placeholder = { Text("com.example.app1\ncom.example.app2") },
-                shape = RoundedCornerShape(16.dp),
+                    .height(100.dp),
+                placeholder = { Text("粘贴包名或 pm 命令…") },
+                shape = RoundedCornerShape(12.dp),
             )
-            Spacer(Modifier.height(12.dp))
+            // 实时识别数
+            val detectedCount = remember(text) { vm.extractPackageNames(text).size }
+            if (text.isNotBlank() && detectedCount > 0) {
+                Spacer(Modifier.height(6.dp))
+                TinyBadge(
+                    "✓ 识别出 $detectedCount 个包名",
+                    MaterialTheme.colorScheme.secondaryContainer,
+                    MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+            Spacer(Modifier.height(10.dp))
             Button(
                 onClick = { vm.parseDebloatList(text) },
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(14.dp),
             ) { Text("解析清单") }
         }
 
+        // 解析结果：折叠卡片
         if (items.isNotEmpty()) {
-            GroupHeader("解析结果（${items.size} 个，${items.count { it.entry != null }} 个在手机上）")
+            var expanded by remember(items) { mutableStateOf(false) }
+            val onPhone = items.count { it.entry != null }
+            val canDisable = items.mapNotNull { it.entry }
+                .filter { it.isEnabled && !it.isUninstalled }
+            val canDelete = items.mapNotNull { it.entry }
+                .filter { !it.isUninstalled }
+            val disabledCount = items.count { it.entry?.let { e -> !e.isEnabled && !e.isUninstalled } == true }
+            val notFound = items.size - onPhone
             ContentCard {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items.forEach { item ->
-                        val e = item.entry
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    e?.appName ?: item.packageName,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    item.packageName,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                            val label = when {
-                                e == null -> "未找到"
-                                e.isUninstalled -> "已删除"
-                                !e.isEnabled -> "已停用"
-                                else -> "已安装"
-                            }
-                            val (bc, cc) = when {
-                                e == null -> MaterialTheme.colorScheme.surfaceVariant to
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                e.isUninstalled -> MaterialTheme.colorScheme.tertiaryContainer to
-                                    MaterialTheme.colorScheme.onTertiaryContainer
-                                !e.isEnabled -> MaterialTheme.colorScheme.errorContainer to
-                                    MaterialTheme.colorScheme.onErrorContainer
-                                else -> MaterialTheme.colorScheme.primaryContainer to
-                                    MaterialTheme.colorScheme.onPrimaryContainer
-                            }
-                            TinyBadge(label, bc, cc)
+                    // 标题行：点击展开/收起
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { expanded = !expanded },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "解析结果 ${items.size} 个",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                buildString {
+                                    append("$onPhone 在手机上")
+                                    if (canDisable.isNotEmpty()) append(" · ${canDisable.size} 可停用")
+                                    if (disabledCount > 0) append(" · $disabledCount 已停用")
+                                    if (notFound > 0) append(" · $notFound 未找到")
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
+                        Icon(
+                            if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                            contentDescription = if (expanded) "收起" else "展开",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
+                    // 操作按钮：始终可见
                     if (shizukuReady) {
-                        val canDisable = items.mapNotNull { it.entry }
-                            .filter { it.isEnabled && !it.isUninstalled }
-                        val canDelete = items.mapNotNull { it.entry }
-                            .filter { !it.isUninstalled }
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxWidth(),
@@ -1249,13 +1324,13 @@ private fun DebloatTab(
                                 onClick = { vm.batchSetEnabled(canDisable, false) },
                                 enabled = canDisable.isNotEmpty() && vm.progress == null,
                                 modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(16.dp),
+                                shape = RoundedCornerShape(14.dp),
                             ) { Text("停用全部(${canDisable.size})") }
                             OutlinedButton(
                                 onClick = { vm.confirmBatchDelete = canDelete },
                                 enabled = canDelete.isNotEmpty() && vm.progress == null,
                                 modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(16.dp),
+                                shape = RoundedCornerShape(14.dp),
                             ) {
                                 Text(
                                     "删除全部(${canDelete.size})",
@@ -1268,47 +1343,471 @@ private fun DebloatTab(
                             Text("批量操作需要 Shizuku，点击去设置 →")
                         }
                     }
+                    // 明细：展开才显示
+                    if (expanded) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceContainerHigh)
+                        Column(
+                            modifier = Modifier.heightIn(max = 320.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            items.forEach { item ->
+                                val e = item.entry
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            e?.appName ?: item.packageName,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Text(
+                                            item.packageName,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                    val label = when {
+                                        e == null -> "未找到"
+                                        e.isUninstalled -> "已删除"
+                                        !e.isEnabled -> "已停用"
+                                        else -> "已安装"
+                                    }
+                                    val (bc, cc) = when {
+                                        e == null -> MaterialTheme.colorScheme.surfaceVariant to
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        e.isUninstalled -> MaterialTheme.colorScheme.tertiaryContainer to
+                                            MaterialTheme.colorScheme.onTertiaryContainer
+                                        !e.isEnabled -> MaterialTheme.colorScheme.errorContainer to
+                                            MaterialTheme.colorScheme.onErrorContainer
+                                        else -> MaterialTheme.colorScheme.primaryContainer to
+                                            MaterialTheme.colorScheme.onPrimaryContainer
+                                    }
+                                    TinyBadge(label, bc, cc)
+                                }
+                            }
+                        }
+                    } else {
+                        TextButton(onClick = { expanded = true }) {
+                            Text("展开查看明细 →")
+                        }
+                    }
                 }
             }
         }
 
-        GroupHeader("导出")
-        ContentCard {
-            Text(
-                "导出 ADB 脚本",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "将当前停用/删除状态导出为 .sh，可在电脑上执行",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            OutlinedButton(
-                onClick = onExportScript,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-            ) { Text("导出脚本") }
-        }
+        // 自动停用：折叠/展开
+        AutoDisableSection(vm = vm)
 
-        GroupHeader("系统状态")
-        ContentCard {
+        // 导出 + OTA：合并紧凑行
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            ),
+        ) {
+            Column {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onExportScript)
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text("📤", fontSize = 18.sp)
+                    Text(
+                        "导出 ADB 脚本",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text("›", color = MaterialTheme.colorScheme.outline, fontSize = 18.sp)
+                }
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text("🔄", fontSize = 18.sp)
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "OTA 恢复检测",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            if (vm.restoredApps.isEmpty()) "当前无被系统恢复的应用"
+                            else "有 ${vm.restoredApps.size} 个被恢复",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+/** 自动停用区域：无任务时折叠成一行，有任务/运行中/完成时展开 */
+@Composable
+private fun AutoDisableSection(vm: AppViewModel) {
+    val context = LocalContext.current
+    val activity = context as? Activity
+    // 自动停用运行时保持屏幕常亮
+    DisposableEffect(vm.autoDisableUi is AutoDisableState.Running) {
+        val win = activity?.window
+        if (vm.autoDisableUi is AutoDisableState.Running) {
+            win?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            win?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    val pending = vm.pendingAutoDisable
+    val ui = vm.autoDisableUi
+    val hasContent = pending.isNotEmpty() ||
+        ui is AutoDisableState.Running ||
+        ui is AutoDisableState.Done
+
+    if (!hasContent) {
+        // 折叠态：一行（左侧蓝条与解析结果视觉归组）
+        val ready = vm.unlockPkgInstalled && vm.accessibilityEnabled
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            ),
+            onClick = { vm.showAutoDisableDetail = true },
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                // 左侧蓝条
+                Box(
+                    modifier = Modifier
+                        .width(3.dp)
+                        .height(36.dp)
+                        .background(
+                            MaterialTheme.colorScheme.primary,
+                            RoundedCornerShape(2.dp),
+                        ),
+                )
+                Text("♿", fontSize = 18.sp)
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "无障碍自动停用",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        if (ready) "● 就绪 · 暂无待处理应用"
+                        else "○ 未配置 · 点击设置",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (ready) Color(0xFF2E7D32)
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text("›", color = MaterialTheme.colorScheme.outline, fontSize = 18.sp)
+            }
+        }
+    } else {
+        // 展开态：橙色高亮卡
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+            ),
+            border = androidx.compose.foundation.BorderStroke(
+                1.dp, MaterialTheme.colorScheme.tertiary
+            ),
+        ) {
+            Column(Modifier.padding(14.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text("♿", fontSize = 20.sp)
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "无障碍自动停用",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        if (pending.isNotEmpty() && ui !is AutoDisableState.Running && ui !is AutoDisableState.Done) {
+                            Text(
+                                "${pending.size} 个待处理（pm 命令被拒绝）",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                when (ui) {
+                    is AutoDisableState.Running -> {
+                        Text(
+                            "正在停用 ${ui.done}/${ui.total}：${ui.currentName}",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        LinearProgressIndicator(
+                            progress = { if (ui.total > 0) ui.done.toFloat() / ui.total else 0f },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "请保持屏幕亮起，不要手动操作",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = { vm.stopAutoDisable() },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp),
+                        ) { Text("停止") }
+                    }
+                    is AutoDisableState.Done -> {
+                        val failed = ui.results.filter { !it.ok }
+                        val okCount = ui.results.size - failed.size
+                        Text(
+                            "停用完成：成功 $okCount 个" +
+                                if (failed.isNotEmpty()) "，失败 ${failed.size} 个" else "",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        if (failed.isNotEmpty()) {
+                            Spacer(Modifier.height(4.dp))
+                            failed.take(5).forEach { r ->
+                                Text(
+                                    "${vm.appNameOf(r.target.pkg)}：${r.reason.ifEmpty { "失败" }}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (failed.isNotEmpty()) {
+                                TextButton(onClick = { vm.retryAutoDisableFailed() }) {
+                                    Text("重试失败项")
+                                }
+                            }
+                            TextButton(onClick = { vm.dismissAutoDisableResult() }) {
+                                Text("关闭")
+                            }
+                        }
+                    }
+                    else -> {
+                        Text(
+                            "将逐个打开系统详情页并点击「停用」，全程自动。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        pending.take(5).forEach { t ->
+                            Text(
+                                "· ${t.name}",
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (pending.size > 5) {
+                            Text(
+                                "…等 ${pending.size} 个",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Button(
+                            onClick = { vm.autoDisablePending() },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp),
+                        ) { Text("开始自动停用（${pending.size}）") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 自动停用配置详情弹窗 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AutoDisableDetailDialog(vm: AppViewModel, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = DIALOG_SHAPE,
+        title = { Text("无障碍自动停用") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "批量停用被系统拒绝的应用会自动记录在这里。无障碍服务逐个打开系统详情页并点击「停用」，全程无需手动操作。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        "解锁组件",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TinyBadge(
+                        if (vm.unlockPkgInstalled) "已安装" else "未安装",
+                        if (vm.unlockPkgInstalled) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                        if (vm.unlockPkgInstalled) MaterialTheme.colorScheme.onPrimaryContainer
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (!vm.unlockPkgInstalled) {
+                        Spacer(Modifier.width(8.dp))
+                        FilledTonalButton(
+                            onClick = { vm.installUnlockPkg(context) },
+                            shape = RoundedCornerShape(12.dp),
+                        ) { Text("安装") }
+                    }
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        "无障碍权限",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TinyBadge(
+                        if (vm.accessibilityEnabled) "已开启" else "未开启",
+                        if (vm.accessibilityEnabled) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                        if (vm.accessibilityEnabled) MaterialTheme.colorScheme.onPrimaryContainer
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (!vm.accessibilityEnabled) {
+                        Spacer(Modifier.width(8.dp))
+                        FilledTonalButton(
+                            onClick = { vm.openAccessibilitySettings() },
+                            shape = RoundedCornerShape(12.dp),
+                        ) { Text("去开启") }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        },
+    )
+}
+
+/** 首页排序底部弹窗 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SortBottomSheet(vm: AppViewModel, onDismiss: () -> Unit) {
+    val settings by vm.settings.collectAsState()
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 32.dp),
+        ) {
             Text(
-                "OTA 恢复检测",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                "排序",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                if (vm.restoredApps.isEmpty()) "当前无被系统恢复的应用"
-                else "有 ${vm.restoredApps.size} 个应用被恢复，见上方提醒",
+                "设置里保留同样入口，两边同步",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Spacer(Modifier.height(8.dp))
+            SortKey.entries.forEach { key ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            vm.setSort(key, settings.sortAsc)
+                        }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        key.title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (settings.sortKey == key) FontWeight.SemiBold else null,
+                        color = if (settings.sortKey == key) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (settings.sortKey == key) {
+                        Icon(
+                            Icons.Filled.Check,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceContainerHigh)
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                FilledTonalButton(
+                    onClick = { vm.setSort(settings.sortKey, true) },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = if (settings.sortAsc) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ),
+                ) { Text("升序 ↑") }
+                FilledTonalButton(
+                    onClick = { vm.setSort(settings.sortKey, false) },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = if (!settings.sortAsc) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ),
+                ) { Text("降序 ↓") }
+            }
         }
-        Spacer(Modifier.height(16.dp))
     }
 }
 
@@ -1349,13 +1848,6 @@ private fun SettingsTab(
 
         GroupHeader("显示")
         SettingsCard {
-            SettingsRow(
-                icon = Icons.Filled.Sort,
-                title = "排序",
-                subtitle = "${settings.sortKey.title} · ${if (settings.sortAsc) "升序" else "降序"}",
-                onClick = { vm.showSort = true },
-                showDivider = true,
-            )
             SettingsRow(
                 icon = Icons.Filled.Share,
                 title = "导出列表",
@@ -1558,7 +2050,6 @@ private fun TerminalScreen(vm: AppViewModel, onBack: () -> Unit) {
                     value = input,
                     onValueChange = { input = it },
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("pm …") },
                     singleLine = true,
                     shape = RoundedCornerShape(16.dp),
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
@@ -2021,54 +2512,6 @@ private fun ShizukuDialog(vm: AppViewModel, onDismiss: () -> Unit) {
                 }
                 TextButton(onClick = onDismiss) { Text("关闭") }
             }
-        },
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SortDialog(vm: AppViewModel, onDismiss: () -> Unit) {
-    val settings by vm.settings.collectAsState()
-    var key by remember { mutableStateOf(settings.sortKey) }
-    var asc by remember { mutableStateOf(settings.sortAsc) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        shape = DIALOG_SHAPE,
-        title = { Text("排序") },
-        text = {
-            Column {
-                SortKey.entries.forEach { k ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .selectable(selected = key == k, onClick = { key = k })
-                            .padding(vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(selected = key == k, onClick = { key = k })
-                        Text(k.title, modifier = Modifier.padding(start = 8.dp))
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    SegmentedButton(
-                        selected = asc,
-                        onClick = { asc = true },
-                        shape = SegmentedButtonDefaults.itemShape(0, 2),
-                    ) { Text("升序") }
-                    SegmentedButton(
-                        selected = !asc,
-                        onClick = { asc = false },
-                        shape = SegmentedButtonDefaults.itemShape(1, 2),
-                    ) { Text("降序") }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { vm.setSort(key, asc); onDismiss() }) { Text("确定") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
         },
     )
 }

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_description">自动停用被系统保护的应用：仅在您点击「开始自动停用」后运行，会自动打开系统应用详情页并点击「停用」。不会读取其他界面内容，不收集任何数据。</string>
+</resources>
