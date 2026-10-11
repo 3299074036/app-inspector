@@ -24,10 +24,10 @@ private val LightColors = lightColorScheme(
     primaryContainer = BrandContainer,
     onPrimaryContainer = OnBrandContainer,
     secondaryContainer = Color(0xFFE8DEF8), // 社区徽标紫
-    surface = Color(0xFFF4F6FB), // 页面底：微蓝灰
+    surface = Color(0xFFF7F8FA), // 页面底：中性浅灰
     surfaceContainerLow = Color.White, // 卡片底色：纯白
-    surfaceContainer = Color(0xFFE9EDF5),
-    surfaceContainerHigh = Color(0xFFE2E7F1),
+    surfaceContainer = Color(0xFFF0F1F4),
+    surfaceContainerHigh = Color(0xFFE8EAEE),
 )
 
 private val DarkColors = darkColorScheme(

@@ -13,6 +13,9 @@
     <!-- 使用情况访问：显示应用最近打开时间（需用户在系统设置中手动授予） -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
 
+    <!-- 安装解锁组件：释放 assets 里的 CTS 测试包并安装（需用户允许"安装未知应用"） -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -37,5 +40,29 @@
             android:exported="true"
             android:multiprocess="false"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <!-- 安装解锁组件：向系统安装器共享 assets 释放的 apk -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/filepaths" />
+        </provider>
+
+        <!-- 无障碍自动停用：在系统设置里自动点击「停用」按钮 -->
+        <service
+            android:name=".accessibility.AutoDisableService"
+            android:exported="true"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
     </application>
 </manifest>
