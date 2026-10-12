@@ -15,13 +15,14 @@ class AppRepository(private val context: Context) {
 
     /** 读取全部已安装应用（IO 线程）。需要 QUERY_ALL_PACKAGES 权限。 */
     suspend fun loadApps(): List<AppEntry> = withContext(Dispatchers.IO) {
+        // P3: 第一次查询只取包名做差集，不需要 metadata，用 flag 0 省一次解析开销
         @Suppress("DEPRECATION")
         val packages = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             pm.getInstalledPackages(
-                PackageManager.PackageInfoFlags.of(PackageManager.GET_META_DATA.toLong())
+                PackageManager.PackageInfoFlags.of(0L)
             )
         } else {
-            pm.getInstalledPackages(PackageManager.GET_META_DATA)
+            pm.getInstalledPackages(0)
         }
         // pm uninstall --user 0 卸载的包：仅在 MATCH_UNINSTALLED_PACKAGES 下可见
         @Suppress("DEPRECATION")

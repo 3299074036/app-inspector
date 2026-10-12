@@ -28,7 +28,7 @@ import kotlinx.coroutines.withContext
 
 /** 应用图标内存缓存，避免滚动时反复 loadIcon */
 object IconCache {
-    private val cache = LruCache<String, ImageBitmap>(256)
+    private val cache = LruCache<String, ImageBitmap>(512)
 
     suspend fun get(pm: PackageManager, entry: AppEntry): ImageBitmap =
         withContext(Dispatchers.IO) {
