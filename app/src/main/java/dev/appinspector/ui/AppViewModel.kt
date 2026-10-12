@@ -30,6 +30,9 @@ import dev.appinspector.data.SortKey
 import dev.appinspector.data.StorageHelper
 import dev.appinspector.data.StorageSizes
 import dev.appinspector.data.UadDb
+import dev.appinspector.data.OpHistory
+import dev.appinspector.data.OpType
+import dev.appinspector.data.OpMethod
 import dev.appinspector.data.UsageStatsHelper
 import dev.appinspector.shizuku.ShizukuManager
 import rikka.shizuku.Shizuku
@@ -137,6 +140,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 清除应用数据（pm clear --user 0，需 Shizuku），调用前请先经 confirmClearData 确认 */
+    /** 记录操作历史 */
+    private fun recordOp(entry: AppEntry, op: String, method: String, success: Boolean) {
+        val app = getApplication<Application>()
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                OpHistory.record(
+                    app, entry.packageName, entry.appName,
+                    op, method, success, entry.apkSize,
+                )
+            }
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                historyVersion++
+            }
+        }
+    }
+
+    /** 操作历史版本号（自增以触发 UI 刷新） */
+    var historyVersion by mutableStateOf(0)
+
     fun clearAppData(entry: AppEntry) {
         viewModelScope.launch {
             val res = ShizukuManager.execCommand(
@@ -146,8 +168,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             res.onSuccess {
                 toastMsg = "已清除 ${entry.appName} 的数据"
                 loadStorageInfo(entry.packageName)
+                recordOp(entry, OpType.CLEAR_DATA, OpMethod.MANUAL, true)
             }.onFailure {
                 toastMsg = "清除失败：${it.message}"
+                recordOp(entry, OpType.CLEAR_DATA, OpMethod.MANUAL, false)
             }
         }
     }
@@ -207,6 +231,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     // 成功的从批量失败记录里清除
                     val okPkgs = s.results.filter { it.ok }.map { it.target.pkg }.toSet()
                     if (okPkgs.isNotEmpty()) batchFailedPkgs = batchFailedPkgs - okPkgs
+                    // 记录操作历史（无障碍自动停用）
+                    val byPkg = allApps.associateBy { it.packageName }
+                    for (r in s.results) {
+                        byPkg[r.target.pkg]?.let { e ->
+                            recordOp(e, OpType.DISABLE, OpMethod.AUTO, r.ok)
+                        }
+                    }
                     refresh()
                 }
             }
@@ -264,12 +295,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     if (detailEntry?.packageName == entry.packageName) {
                         detailEntry = entry.copy(isEnabled = enabled)
                     }
+                    recordOp(entry, if (enabled) OpType.ENABLE else OpType.DISABLE, OpMethod.MANUAL, true)
                 } else {
                     toastMsg = "操作未生效：${entry.appName}（系统拒绝了该操作）"
+                    recordOp(entry, if (enabled) OpType.ENABLE else OpType.DISABLE, OpMethod.MANUAL, false)
                 }
                 refresh()
             }.onFailure {
                 toastMsg = "操作失败：${it.message}"
+                recordOp(entry, if (enabled) OpType.ENABLE else OpType.DISABLE, OpMethod.MANUAL, false)
             }
         }
     }
@@ -286,13 +320,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     store.trackUninstalled(entry.packageName)
                     confirmDeleteEntry = null
                     detailEntry = null
+                    recordOp(entry, OpType.DELETE, OpMethod.MANUAL, true)
                 } else {
                     toastMsg = "操作未生效：${entry.appName}（系统拒绝了该操作）"
                     confirmDeleteEntry = null
+                    recordOp(entry, OpType.DELETE, OpMethod.MANUAL, false)
                 }
                 refresh()
             }.onFailure {
                 toastMsg = "删除失败：${it.message}"
+                recordOp(entry, OpType.DELETE, OpMethod.MANUAL, false)
             }
         }
     }
@@ -307,9 +344,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (detailEntry?.packageName == entry.packageName) {
                     detailEntry = null
                 }
+                recordOp(entry, OpType.RESTORE, OpMethod.MANUAL, true)
                 refresh()
             }.onFailure {
                 toastMsg = "恢复失败：${it.message}"
+                recordOp(entry, OpType.RESTORE, OpMethod.MANUAL, false)
             }
         }
     }
@@ -329,8 +368,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (res.isSuccess) {
                     ok++
                     store.untrack(e.packageName)
+                    recordOp(e, OpType.RESTORE, OpMethod.BATCH, true)
                 } else {
                     failed.add(e.appName)
+                    recordOp(e, OpType.RESTORE, OpMethod.BATCH, false)
                 }
             }
             progress = ExtractProgress(entries.size, entries.size, "")
@@ -370,8 +411,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     ok++
                     if (enabled) store.untrack(e.packageName)
                     else store.trackDisabled(e.packageName)
+                    recordOp(e, if (enabled) OpType.ENABLE else OpType.DISABLE, OpMethod.BATCH, true)
                 } else {
                     failed.add(e.appName)
+                    recordOp(e, if (enabled) OpType.ENABLE else OpType.DISABLE, OpMethod.BATCH, false)
                     // 批量停用被拒 → 记下包名，收拢到「自动停用」卡片走无障碍通道
                     if (!enabled) failedPkgs.add(e.packageName)
                 }
@@ -539,7 +582,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 批量删除（需 Shizuku），调用前请先经 confirmBatchDelete 确认 */
-    fun batchUninstall(entries: List<AppEntry>) {
+    fun batchUninstall(entries: List<AppEntry>, clearDebloatItems: Boolean = true) {
         if (entries.isEmpty()) return
         viewModelScope.launch {
             val ctx = getApplication<Application>()
@@ -554,15 +597,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (res.isSuccess && queryActualUninstalled(e.packageName)) {
                     ok++
                     store.trackUninstalled(e.packageName)
+                    recordOp(e, OpType.DELETE, OpMethod.BATCH, true)
                 } else {
                     failed.add(e.appName)
+                    recordOp(e, OpType.DELETE, OpMethod.BATCH, false)
                 }
             }
             progress = ExtractProgress(entries.size, entries.size, "")
             progress = null
             confirmBatchDelete = null
             exitSelectMode()
-            debloatItems = emptyList()
+            if (clearDebloatItems) debloatItems = emptyList()
             refresh()
             toastMsg = buildString {
                 append("批量删除完成：成功 $ok 个")
@@ -573,6 +618,68 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     append("，系统拒绝）")
                 }
             }
+        }
+    }
+
+    /**
+     * L3: 从备份串行恢复（先停用后删除，共用一套进度，避免双协程打架）。
+     * 恢复完自增 backupVersion 以刷新备份页快照（U4）。
+     */
+    fun restoreFromBackup(toDisable: List<AppEntry>, toDelete: List<AppEntry>) {
+        if (toDisable.isEmpty() && toDelete.isEmpty()) {
+            showToast("无需恢复：备份中的应用状态与当前一致")
+            return
+        }
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            var okDisable = 0
+            var okDelete = 0
+            val failed = mutableListOf<String>()
+            val failedPkgs = mutableListOf<String>()
+            val total = toDisable.size + toDelete.size
+            var done = 0
+            if (toDisable.isNotEmpty()) {
+                progressTitle = "正在恢复停用"
+                for (e in toDisable) {
+                    progress = ExtractProgress(done, total, e.appName)
+                    val res = ShizukuManager.setEnabled(ctx, e.packageName, false)
+                    if (res.isSuccess && !queryActualEnabled(e.packageName)) {
+                        okDisable++
+                        store.trackDisabled(e.packageName)
+                        recordOp(e, OpType.DISABLE, OpMethod.BATCH, true)
+                    } else {
+                        failed.add(e.appName)
+                        failedPkgs.add(e.packageName)
+                        recordOp(e, OpType.DISABLE, OpMethod.BATCH, false)
+                    }
+                    done++
+                }
+            }
+            if (toDelete.isNotEmpty()) {
+                progressTitle = "正在恢复删除"
+                for (e in toDelete) {
+                    progress = ExtractProgress(done, total, e.appName)
+                    val res = ShizukuManager.uninstall(ctx, e.packageName)
+                    if (res.isSuccess && queryActualUninstalled(e.packageName)) {
+                        okDelete++
+                        store.trackUninstalled(e.packageName)
+                        recordOp(e, OpType.DELETE, OpMethod.BATCH, true)
+                    } else {
+                        failed.add(e.appName)
+                        recordOp(e, OpType.DELETE, OpMethod.BATCH, false)
+                    }
+                    done++
+                }
+            }
+            progress = ExtractProgress(total, total, "")
+            progress = null
+            if (failedPkgs.isNotEmpty()) batchFailedPkgs = batchFailedPkgs + failedPkgs.toSet()
+            refresh()
+            backupManager.bumpVersion()
+            showToast(buildString {
+                append("恢复完成：停用 $okDisable 个，删除 $okDelete 个")
+                if (failed.isNotEmpty()) append("，未生效 ${failed.size} 个")
+            })
         }
     }
 
@@ -648,8 +755,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     // 验证真实状态
                     if (res.isSuccess && !queryActualEnabled(e.packageName)) {
                         ok++
+                        recordOp(e, OpType.DISABLE, OpMethod.OTA, true)
                     } else {
                         failed.add(e.appName)
+                        recordOp(e, OpType.DISABLE, OpMethod.OTA, false)
                     }
                 }
                 progress = null
@@ -662,8 +771,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     val res = ShizukuManager.uninstall(ctx, e.packageName)
                     if (res.isSuccess && queryActualUninstalled(e.packageName)) {
                         ok++
+                        recordOp(e, OpType.DELETE, OpMethod.OTA, true)
                     } else {
                         failed.add(e.appName)
+                        recordOp(e, OpType.DELETE, OpMethod.OTA, false)
                     }
                 }
                 progress = null
@@ -682,6 +793,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 忽略恢复提醒：取消对这些包的追踪 */
+    // ============ v6.7: 配置备份（文件操作已抽到 BackupManager） ============
+    val backupManager = BackupManager(
+        app = getApplication(),
+        scope = viewModelScope,
+        snapshotProvider = ::currentSnapshot,
+        onToast = ::showToast,
+    )
+
+    /** 当前快照：已停用 / 已删除包名 */
+    fun currentSnapshot(): Pair<List<String>, List<String>> {
+        val disabled = allApps.filter { !it.isEnabled && !it.isUninstalled }.map { it.packageName }
+        val deleted = allApps.filter { it.isUninstalled }.map { it.packageName }
+        return disabled to deleted
+    }
+
+    /** v6.7: 按包名查应用条目（供备份恢复用） */
+    fun findEntry(pkg: String): AppEntry? = allApps.find { it.packageName == pkg }
+
     fun ignoreRestored() {
         store.untrackAll(restoredApps.map { it.packageName })
         restoredApps = emptyList()
@@ -815,7 +944,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         ExportFormat.XLSX -> writeXlsx(entries, fields, out)
                     }
                 } ?: throw IllegalStateException("无法打开输出流")
-                withContext(Dispatchers.Main) { toastMsg = "已导出 ${entries.size} 条记录" }
+                withContext(Dispatchers.Main) { toastMsg = "导出成功" }
             } catch (t: Throwable) {
                 withContext(Dispatchers.Main) { toastMsg = "导出失败：${t.message}" }
             }
@@ -927,7 +1056,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     out.write(sb.toString().toByteArray(Charsets.UTF_8))
                 } ?: throw IllegalStateException("无法打开输出流")
                 withContext(Dispatchers.Main) {
-                    toastMsg = "已导出脚本：停用 ${disabled.size} 个，删除 ${uninstalled.size} 个"
+                    toastMsg = "导出成功"
                 }
             } catch (t: Throwable) {
                 withContext(Dispatchers.Main) { toastMsg = "导出失败：${t.message}" }
@@ -938,6 +1067,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- Shizuku 命令终端 ----------
 
     var showTerminal by mutableStateOf(false)
+    /** v6.7: 操作历史 / 精简报告 / 配置备份 全屏页 */
+    var showHistory by mutableStateOf(false)
+    var showReport by mutableStateOf(false)
+    var showBackup by mutableStateOf(false)
 
     data class TerminalLine(
         val text: String,
@@ -967,7 +1100,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         terminalRunning = true
         viewModelScope.launch(Dispatchers.IO) {
             val ctx = getApplication<Application>()
-            val newLines = mutableListOf<TerminalLine>()
             for ((i, cmd) in cmds.withIndex()) {
                 // 多条时标注序号
                 val prompt = if (cmds.size > 1) "$ [${i + 1}/${cmds.size}] $cmd" else "$ $cmd"
@@ -985,7 +1117,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         TerminalLine("错误：${it.message}", isCommand = false, isError = true)
                     },
                 )
-                newLines.add(line)
                 // v6.6: 状态行（批量时带 [n/N] 序号）
                 val tag = if (cmds.size > 1) "[${i + 1}/${cmds.size}]" else ""
                 val statusLine = TerminalLine(
@@ -1000,8 +1131,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             withContext(Dispatchers.Main) {
                 terminalRunning = false
-                // 批量执行完刷新列表（pm 操作可能改变应用状态）
-                if (cmds.size > 1) refresh()
+                // 执行完刷新列表（pm 操作可能改变应用状态；单条 pm 命令也刷新）
+                val joined = cmds.joinToString(" ")
+                if (cmds.size > 1 || joined.trimStart().startsWith("pm ")) refresh()
             }
         }
     }
