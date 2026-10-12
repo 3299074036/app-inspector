@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -50,6 +51,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Terminal
@@ -129,6 +132,9 @@ import dev.appinspector.data.AppIcon
 import dev.appinspector.data.SortKey
 import dev.appinspector.data.StorageHelper
 import dev.appinspector.data.UadDb
+import dev.appinspector.data.OpHistory
+import dev.appinspector.data.OpType
+import dev.appinspector.data.OpMethod
 import dev.appinspector.data.UsageStatsHelper
 import dev.appinspector.shizuku.ShizukuManager
 import dev.appinspector.export.ALL_EXPORT_FIELDS
@@ -143,7 +149,7 @@ private enum class MainTab(val title: String) {
     SETTINGS("设置"),
 }
 
-private val DIALOG_SHAPE = RoundedCornerShape(28.dp)
+val DIALOG_SHAPE = RoundedCornerShape(28.dp)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -206,6 +212,15 @@ fun MainScreen(
     // 终端全屏页
     if (vm.showTerminal) {
         TerminalScreen(vm = vm, onBack = { vm.showTerminal = false })
+    } else if (vm.showHistory) {
+        // v6.7: 操作历史全屏页
+        HistoryScreen(vm = vm, onBack = { vm.showHistory = false })
+    } else if (vm.showReport) {
+        // v6.7: 精简报告全屏页
+        ReportScreen(vm = vm, onBack = { vm.showReport = false })
+    } else if (vm.showBackup) {
+        // v6.7: 配置备份全屏页
+        BackupScreen(vm = vm, onBack = { vm.showBackup = false })
     } else {
         Scaffold(
             topBar = {
@@ -1212,7 +1227,7 @@ private fun PillNavItem(
 
 /** v5: 品牌蓝渐变主按钮 */
 @Composable
-private fun GradientButton(
+fun GradientButton(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -1253,7 +1268,7 @@ private fun GradientButton(
 
 /** v5: 彩色圆角图标块（emoji 版） */
 @Composable
-private fun TileIcon(
+fun TileIcon(
     emoji: String,
     kind: TileKind,
     size: androidx.compose.ui.unit.Dp = 38.dp,
@@ -1283,7 +1298,7 @@ private fun GroupHeader(text: String) {
 
 /** 内容卡片 */
 @Composable
-private fun ContentCard(content: @Composable () -> Unit) {
+fun ContentCard(content: @Composable () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -1824,6 +1839,48 @@ private fun DebloatTab(
                         )
                     }
                 }
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                )
+                // v6.7: 操作历史入口
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { vm.showHistory = true }
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    TileIcon("🕘", TileKind.PURPLE, 34.dp)
+                    Text(
+                        "操作历史",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text("›", color = MaterialTheme.colorScheme.outline, fontSize = 18.sp)
+                }
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                )
+                // v6.7: 精简报告入口
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { vm.showReport = true }
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    TileIcon("📊", TileKind.BLUE, 34.dp)
+                    Text(
+                        "精简报告",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text("›", color = MaterialTheme.colorScheme.outline, fontSize = 18.sp)
+                }
             }
         }
         Spacer(Modifier.height(16.dp))
@@ -2282,6 +2339,14 @@ private fun SettingsTab(
                     vm.refreshShizukuStatus()
                     vm.showShizukuDialog = true
                 },
+            )
+            // v6.7: 配置备份入口
+            SettingsRow(
+                icon = Icons.Filled.Save,
+                tileKind = TileKind.PURPLE,
+                title = "配置备份",
+                subtitle = "停用/删除清单快照 · 一键恢复",
+                onClick = { vm.showBackup = true },
             )
         }
 
@@ -3110,7 +3175,7 @@ private fun UadSection(entry: AppEntry) {
     val info = remember(entry.packageName) {
         UadDb.query(context, entry.packageName)
     } ?: return
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by remember(entry.packageName) { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -3132,16 +3197,36 @@ private fun UadSection(entry: AppEntry) {
                     info.subtitleCn,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
+            // v6.6: 明确的展开提示
+            if (info.description.isNotBlank()) {
+                Text(
+                    if (expanded) "收起" else "详细说明",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Icon(
+                    if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp),
                 )
             }
         }
         if (expanded && info.description.isNotBlank()) {
             Spacer(Modifier.height(4.dp))
-            Text(
-                info.description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            androidx.compose.foundation.text.selection.SelectionContainer {
+                Text(
+                    info.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         Text(
             "数据来源：Universal Android Debloater 社区清单，仅供参考",
@@ -3150,6 +3235,7 @@ private fun UadSection(entry: AppEntry) {
         )
     }
 }
+
 
 /** 双列信息网格：一行显示两个字段 */
 @Composable
