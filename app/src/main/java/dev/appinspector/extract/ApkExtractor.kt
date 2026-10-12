@@ -14,13 +14,15 @@ import java.io.FileInputStream
  * {A} 应用名称  {V} 版本名称  {P} 应用包名  {C} 版本号
  */
 fun buildApkFileName(entry: AppEntry, expr: String): String {
+    val illegal = Regex("[\\\\/:*?\"<>|]")
     val safeName = entry.appName
-        .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        .replace(illegal, "_")
         .trim()
         .ifBlank { entry.packageName }
+    val safeVersion = (entry.versionName ?: "unknown").replace(illegal, "_")
     val name = expr
         .replace("{A}", safeName)
-        .replace("{V}", entry.versionName ?: "unknown")
+        .replace("{V}", safeVersion)
         .replace("{P}", entry.packageName)
         .replace("{C}", entry.versionCode.toString())
         .trim()

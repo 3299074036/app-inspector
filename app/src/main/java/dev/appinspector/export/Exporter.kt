@@ -77,11 +77,15 @@ fun buildTsv(entries: List<AppEntry>, fields: List<ExportField>): String {
     sb.append(fields.joinToString("\t") { it.title }).append("\n")
     for (e in entries) {
         sb.append(fields.joinToString("\t") {
-            fieldValue(e, it.key).replace("\t", " ").replace("\n", " ")
+            fieldValue(e, it.key).replace("\t", " ").replace("\n", " ").csvSafe()
         }).append("\n")
     }
     return sb.toString()
 }
+
+/** CSV 公式注入防护：= + - @ 开头加单引号 */
+private fun String.csvSafe(): String =
+    if (isNotEmpty() && this[0] in "=+-@") "'$this" else this
 
 private fun String.xmlEsc(): String = this
     .replace("&", "&amp;")

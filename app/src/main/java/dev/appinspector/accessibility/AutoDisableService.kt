@@ -105,6 +105,9 @@ class AutoDisableService : AccessibilityService() {
 
     private fun begin(targets: List<AutoDisableTarget>) {
         stopInternal(silent = true)
+        results.clear()
+        nextTask?.let { handler.removeCallbacks(it) }
+        nextTask = null
         if (targets.isEmpty()) return
         queue.addAll(targets)
         total = targets.size
@@ -115,6 +118,8 @@ class AutoDisableService : AccessibilityService() {
     private fun stopInternal(silent: Boolean = false) {
         timeoutTask?.let { handler.removeCallbacks(it) }
         timeoutTask = null
+        nextTask?.let { handler.removeCallbacks(it) }
+        nextTask = null
         queue.clear()
         current = null
         phase = Phase.IDLE
@@ -155,6 +160,8 @@ class AutoDisableService : AccessibilityService() {
         handler.postDelayed(task, TIMEOUT_MS)
     }
 
+    private var nextTask: Runnable? = null
+
     private fun finishItem(ok: Boolean, reason: String = "") {
         timeoutTask?.let { handler.removeCallbacks(it) }
         timeoutTask = null
@@ -162,7 +169,10 @@ class AutoDisableService : AccessibilityService() {
         results.add(AutoDisableItemResult(cur, ok, reason))
         current = null
         phase = Phase.IDLE
-        handler.postDelayed({ processNext() }, NEXT_DELAY_MS)
+        nextTask?.let { handler.removeCallbacks(it) }
+        val task = Runnable { processNext() }
+        nextTask = task
+        handler.postDelayed(task, NEXT_DELAY_MS)
     }
 
     private fun bringAppToFront() {
@@ -207,7 +217,7 @@ class AutoDisableService : AccessibilityService() {
         // 「停用」存在但灰色不可点 → 保护未解除（解锁组件没装）
         if (!looksLikeAppDetails(root, eventClass)) return
         val grey = root.findAccessibilityNodeInfosByText("停用").any {
-            it.isClickable && !it.isEnabled &&
+            !it.isEnabled &&
                 it.className == "android.widget.Button" &&
                 it.text?.toString() == "停用"
         }
