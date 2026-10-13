@@ -80,6 +80,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import dev.appinspector.ui.theme.AppType
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -226,7 +227,7 @@ fun HistoryScreen(vm: AppViewModel, onBack: () -> Unit) {
                     ) {
                         Text(
                             label,
-                            fontSize = 12.sp,
+                            style = AppType.bodySm,
                             fontWeight = FontWeight.SemiBold,
                             color = if (selected) MaterialTheme.colorScheme.onPrimary
                             else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -259,7 +260,7 @@ fun HistoryScreen(vm: AppViewModel, onBack: () -> Unit) {
                         item(key = "day_$day") {
                             Text(
                                 day,
-                                fontSize = 12.sp,
+                                style = AppType.bodySm,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(start = 4.dp, top = 10.dp, bottom = 6.dp),
@@ -323,20 +324,20 @@ fun HistoryRow(r: dev.appinspector.data.OpRecord) {
                     .background(bg, RoundedCornerShape(10.dp)),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(icon, fontSize = 17.sp)
+                Text(icon, style = AppType.bodySm.copy(fontSize = 17.sp))
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     r.appName.ifBlank { r.pkg },
-                    fontSize = 13.sp,
+                    style = AppType.bodyMd,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 )
                 Text(
                     "${OpHistory.opTitle(r.op)} · ${OpHistory.methodTitle(r.method)} · ${r.pkg}",
-                    fontSize = 11.sp,
+                    style = AppType.bodySm,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
@@ -345,7 +346,7 @@ fun HistoryRow(r: dev.appinspector.data.OpRecord) {
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     timeFmt.format(java.util.Date(r.timeMs)),
-                    fontSize = 11.sp,
+                    style = AppType.bodySm,
                     color = MaterialTheme.colorScheme.outline,
                 )
                 Spacer(Modifier.height(3.dp))
@@ -355,7 +356,7 @@ fun HistoryRow(r: dev.appinspector.data.OpRecord) {
                 ) {
                     Text(
                         if (r.success) "成功" else "未生效",
-                        fontSize = 10.sp,
+                        style = AppType.bodySm,
                         fontWeight = FontWeight.Bold,
                         color = if (r.success) Color(0xFF16A34A) else Color(0xFFDC2626),
                         modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
