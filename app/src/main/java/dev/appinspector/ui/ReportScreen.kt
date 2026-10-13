@@ -111,6 +111,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import dev.appinspector.ui.theme.TileKind
 import dev.appinspector.ui.theme.brandGradient
+import dev.appinspector.ui.theme.AppType
 import dev.appinspector.ui.theme.tileColors
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
@@ -227,13 +228,12 @@ fun ReportScreen(vm: AppViewModel, onBack: () -> Unit) {
                 Column {
                     Text(
                         formatBytes(freedBytes),
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.ExtraBold,
+                        style = AppType.display,
                         color = Color.White,
                     )
                     Text(
                         "累计释放空间（含应用数据清理）",
-                        fontSize = 12.sp,
+                        style = AppType.bodySm,
                         color = Color.White.copy(alpha = 0.85f),
                     )
                 }
@@ -261,8 +261,8 @@ fun ReportScreen(vm: AppViewModel, onBack: () -> Unit) {
                             modifier = Modifier.padding(vertical = 14.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
-                            Text(n.toString(), fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = color)
-                            Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(n.toString(), style = AppType.display, color = color)
+                            Text(label, style = AppType.bodySm, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -271,14 +271,14 @@ fun ReportScreen(vm: AppViewModel, onBack: () -> Unit) {
             // 操作构成
             if (compose.isNotEmpty()) {
                 ContentCard {
-                    Text("📊 操作构成", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("📊 操作构成", style = AppType.titleMd)
                     Spacer(Modifier.height(8.dp))
                     compose.forEach { (label, count, color) ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(vertical = 5.dp),
                         ) {
-                            Text(label, fontSize = 13.sp, modifier = Modifier.width(48.dp))
+                            Text(label, style = AppType.bodyMd, modifier = Modifier.width(48.dp))
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
@@ -296,7 +296,7 @@ fun ReportScreen(vm: AppViewModel, onBack: () -> Unit) {
                                 )
                             }
                             Spacer(Modifier.width(8.dp))
-                            Text(count.toString(), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(count.toString(), style = AppType.bodySm, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -305,7 +305,7 @@ fun ReportScreen(vm: AppViewModel, onBack: () -> Unit) {
             // TOP 3
             if (top3.isNotEmpty()) {
                 ContentCard {
-                    Text("🏆 释放空间 TOP 3", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("🏆 释放空间 TOP 3", style = AppType.titleMd)
                     Spacer(Modifier.height(4.dp))
                     top3.forEach { r ->
                         Row(
@@ -313,16 +313,16 @@ fun ReportScreen(vm: AppViewModel, onBack: () -> Unit) {
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text(r.appName.ifBlank { r.pkg }, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Text(r.appName.ifBlank { r.pkg }, style = AppType.bodyLg)
                                 Text(
                                     "${r.pkg} · ${OpHistory.opTitle(r.op)}",
-                                    fontSize = 11.sp,
+                                    style = AppType.bodySm,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                 )
                             }
-                            Text(formatBytes(r.sizeBytes), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(formatBytes(r.sizeBytes), style = AppType.label)
                         }
                     }
                 }
