@@ -80,6 +80,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import dev.appinspector.ui.theme.AppType
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -185,7 +186,7 @@ fun BackupScreen(vm: AppViewModel, onBack: () -> Unit) {
         ) {
             // 当前快照
             ContentCard {
-                Text("💾 当前快照", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("💾 当前快照", style = AppType.titleMd)
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     listOf(
@@ -201,8 +202,8 @@ fun BackupScreen(vm: AppViewModel, onBack: () -> Unit) {
                                 modifier = Modifier.padding(vertical = 12.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             ) {
-                                Text(n.toString(), fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
-                                Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(n.toString(), style = AppType.titleLg, color = MaterialTheme.colorScheme.primary)
+                                Text(label, style = AppType.bodySm, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -210,7 +211,7 @@ fun BackupScreen(vm: AppViewModel, onBack: () -> Unit) {
                 Text(
                     if (lastBackup != null) "上次备份：${timeFmt.format(java.util.Date(lastBackup.timeMs))}"
                     else "尚未备份",
-                    fontSize = 11.sp,
+                    style = AppType.bodySm,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 10.dp),
                 )
@@ -230,12 +231,12 @@ fun BackupScreen(vm: AppViewModel, onBack: () -> Unit) {
             Spacer(Modifier.height(12.dp))
             // 备份记录
             ContentCard {
-                Text("📁 备份记录", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("📁 备份记录", style = AppType.titleMd)
                 Spacer(Modifier.height(4.dp))
                 if (backups.isEmpty()) {
                     Text(
                         "暂无备份记录",
-                        fontSize = 13.sp,
+                        style = AppType.bodyMd,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(vertical = 12.dp),
                     )
@@ -252,12 +253,12 @@ fun BackupScreen(vm: AppViewModel, onBack: () -> Unit) {
                             Column(Modifier.weight(1f)) {
                                 Text(
                                     "备份 ${timeFmt.format(java.util.Date(b.timeMs))}",
-                                    fontSize = 13.sp,
+                                    style = AppType.bodyMd,
                                     fontWeight = FontWeight.SemiBold,
                                 )
                                 Text(
                                     "停用 ${b.disabled.size} · 删除 ${b.deleted.size}",
-                                    fontSize = 11.sp,
+                                    style = AppType.bodySm,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
@@ -288,10 +289,10 @@ fun BackupScreen(vm: AppViewModel, onBack: () -> Unit) {
                 ) {
                     TileIcon("📥", TileKind.GREEN, 36.dp)
                     Column(Modifier.weight(1f)) {
-                        Text("从文件导入", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        Text("选择 JSON 备份文件", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("从文件导入", style = AppType.bodyLg)
+                        Text("选择 JSON 备份文件", style = AppType.bodySm, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Text("›", color = MaterialTheme.colorScheme.outline, fontSize = 18.sp)
+                    Text("›", color = MaterialTheme.colorScheme.outline, style = AppType.bodyLg.copy(fontSize = 18.sp))
                 }
             }
             Spacer(Modifier.height(24.dp))
@@ -317,12 +318,12 @@ fun BackupScreen(vm: AppViewModel, onBack: () -> Unit) {
                         Text(
                             (toDisable + toDelete).take(5).joinToString("、") { it.appName } +
                                 if (toDisable.size + toDelete.size > 5) " 等" else "",
-                            fontSize = 12.sp,
+                            style = AppType.bodySm,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     Spacer(Modifier.height(6.dp))
-                    Text("需要 Shizuku 授权，操作会记入操作历史。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("需要 Shizuku 授权，操作会记入操作历史。", style = AppType.bodySm, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             },
             confirmButton = {
