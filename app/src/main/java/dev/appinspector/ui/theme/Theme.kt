@@ -7,6 +7,8 @@ import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -76,6 +78,43 @@ fun tileColors(kind: TileKind): Pair<Color, Color> {
 fun brandGradient(): Brush =
     Brush.horizontalGradient(listOf(Color(0xFF3B82F6), Color(0xFF1B6EF3)))
 
+// ---------- 状态色（Token v1）：状态徽章编码 ----------
+@Immutable
+data class AppStatusColors(
+    val caution: Color,
+    val onCaution: Color,
+    val warning: Color,
+    val onWarning: Color,
+    val disabled: Color,
+    val onDisabled: Color,
+    val success: Color,
+    val onSuccess: Color,
+)
+
+private val LightStatus = AppStatusColors(
+    caution = Color(0xFFE8DEF8),
+    onCaution = Color(0xFF4A2E7A),
+    warning = Color(0xFFF9DEDC),
+    onWarning = Color(0xFF7A2E1F),
+    disabled = Color(0xFFFFF3DC),
+    onDisabled = Color(0xFF7A5200),
+    success = Color(0xFFDDF0DD),
+    onSuccess = Color(0xFF1B5E20),
+)
+
+private val DarkStatus = AppStatusColors(
+    caution = Color(0xFF3B2A5E),
+    onCaution = Color(0xFFD6BCFA),
+    warning = Color(0xFF4A2A22),
+    onWarning = Color(0xFFFFB4A8),
+    disabled = Color(0xFF4A3A14),
+    onDisabled = Color(0xFFF5B453),
+    success = Color(0xFF1B4332),
+    onSuccess = Color(0xFF6FCF97),
+)
+
+val LocalAppStatusColors = staticCompositionLocalOf { LightStatus }
+
 /** 主题模式：system=跟随系统，light=浅色，dark=深色 */
 @Composable
 fun AppInspectorTheme(
@@ -87,9 +126,14 @@ fun AppInspectorTheme(
         "dark" -> true
         else -> isSystemInDarkTheme()
     }
-    MaterialTheme(
-        colorScheme = if (dark) DarkColors else LightColors,
-        shapes = AppShapes,
-        content = content,
-    )
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalAppStatusColors provides if (dark) DarkStatus else LightStatus,
+    ) {
+        MaterialTheme(
+            colorScheme = if (dark) DarkColors else LightColors,
+            shapes = AppShapes,
+            typography = AppTypography,
+            content = content,
+        )
+    }
 }
