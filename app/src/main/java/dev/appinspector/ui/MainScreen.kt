@@ -154,6 +154,9 @@ private enum class MainTab(val title: String) {
 
 val DIALOG_SHAPE = RoundedCornerShape(28.dp)
 
+/** 终端"已连接"状态文字色（第 1 次原版：固定深绿） */
+private val StateGreenDark = Color(0xFF0A5C0A)
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun MainScreen(
@@ -237,6 +240,9 @@ fun MainScreen(
     } else if (vm.showBackup) {
         // v6.7: 配置备份全屏页
         BackupScreen(vm = vm, onBack = { vm.showBackup = false })
+    } else if (vm.showApkManager) {
+        // 安装包管理全屏页
+        ApkManagerScreen(vm = vm, onBack = { vm.showApkManager = false })
     } else {
         Scaffold(
             topBar = {
@@ -895,8 +901,8 @@ private fun AppListPage(vm: AppViewModel, filter: AppFilter) {
             // v6.1: 扁平列表，间距由 item 内边距保证，此处不再额外 spacedBy
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            // 建议精简页顶部提示：跟随子筛选显示该等级的具体影响
-            if (filter == AppFilter.SUGGEST && !vm.selectMode) {
+            // 建议精简页顶部提示：跟随子筛选显示该等级的具体影响（多选模式下也显示）
+            if (filter == AppFilter.SUGGEST) {
                 item {
                     SuggestHint(sub = sub, count = list.size)
                 }
@@ -1055,40 +1061,38 @@ private fun FilterTabRow(
 /** 建议精简页顶部提示：按子筛选显示该等级的具体影响 */
 @Composable
 private fun SuggestHint(sub: SuggestSubFilter, count: Int) {
-    if (sub == SuggestSubFilter.ALL) {
-        // 全部档：只保留一句手势提示（tab 上已有计数）
-        Text(
+    val (text, bg, fg) = when (sub) {
+        // 全部档：手势提示（tab 上已有计数），中性底色与其他提示条统一样式
+        SuggestSubFilter.ALL -> Triple(
             "长按多选可批量停用 / 删除 / 恢复 / 提取",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+            MaterialTheme.colorScheme.surfaceContainerHigh,
+            MaterialTheme.colorScheme.onSurfaceVariant,
         )
-    } else {
-        val (text, bg, fg) = when (sub) {
-            SuggestSubFilter.DELETABLE ->
-                Triple("✅ 卸载无影响，可放心删除", Color(0xFFE3F2FD), Color(0xFF1565C0))
-            SuggestSubFilter.CAREFUL ->
-                Triple("⚠️ 可能影响部分功能，建议先停用观察", Color(0xFFFFF8E1), Color(0xFFF57F00))
-            SuggestSubFilter.NOT_RECOMMENDED ->
-                Triple("⛔ 可能导致系统异常，非必要不动", Color(0xFFFFEBEE), Color(0xFFC62828))
-            SuggestSubFilter.DO_NOT ->
-                Triple("🚫 会导致系统故障，请勿操作", Color(0xFFFCE4EC), Color(0xFFB71C1C))
-            else -> Triple("", Color.Transparent, Color.Transparent)
-        }
-        Surface(
-            color = bg,
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 2.dp),
-        ) {
-            Text(
-                "$text（共 $count 个）",
-                style = MaterialTheme.typography.bodySmall,
-                color = fg,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            )
-        }
+        SuggestSubFilter.DELETABLE ->
+            Triple("✅ 卸载无影响，可放心删除", Color(0xFFE3F2FD), Color(0xFF1565C0))
+        SuggestSubFilter.CAREFUL ->
+            Triple("⚠️ 可能影响部分功能，建议先停用观察", Color(0xFFFFF8E1), Color(0xFFF57F00))
+        SuggestSubFilter.NOT_RECOMMENDED ->
+            Triple("⛔ 可能导致系统异常，非必要不动", Color(0xFFFFEBEE), Color(0xFFC62828))
+        SuggestSubFilter.DO_NOT ->
+            Triple("🚫 会导致系统故障，请勿操作", Color(0xFFFCE4EC), Color(0xFFB71C1C))
+    }
+    Surface(
+        color = bg,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            // 上下各 12dp：LazyColumn 顶部 contentPadding 8dp + 本项 top 4dp；
+            // 下方本项 bottom 10dp + 列表 spacedBy 2dp；
+            // 横向不加 padding，与 chips 行 / 列表项同为 16dp 对齐
+            .padding(top = 4.dp, bottom = 10.dp),
+    ) {
+        Text(
+            if (sub == SuggestSubFilter.ALL) text else "$text（共 $count 个）",
+            style = MaterialTheme.typography.bodySmall,
+            color = fg,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+        )
     }
 }
 
@@ -1822,6 +1826,33 @@ private fun DebloatTab(
             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         ) {
             Column {
+                // 安装包管理入口（与导出/历史同一组，置顶）
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { vm.showApkManager = true }
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    TileIcon("📦", TileKind.BLUE, 34.dp)
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "安装包管理",
+                            style = AppType.bodyMd,
+                        )
+                        Text(
+                            "扫描目录中的 APK，一键安装 / 删除",
+                            style = AppType.bodySm,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text("›", color = MaterialTheme.colorScheme.outline, style = AppType.bodyLg.copy(fontSize = 18.sp))
+                }
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                )
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2197,9 +2228,12 @@ private fun AutoDisableDetailDialog(vm: AppViewModel, onDismiss: () -> Unit) {
 @Composable
 private fun SortBottomSheet(vm: AppViewModel, onDismiss: () -> Unit) {
     val settings by vm.settings.collectAsState()
+    // 直接全展开，升序/降序按钮无需上拉就能看到
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        sheetState = sheetState,
     ) {
         Column(
             modifier = Modifier
@@ -2510,20 +2544,34 @@ private fun TerminalScreen(vm: AppViewModel, onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Shizuku 终端", style = AppType.titleLg) },
+                title = {
+                    // 标题与连接状态同行：Shizuku 终端 ● 已连接，强制不换行
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Shizuku 终端", style = AppType.titleMd, maxLines = 1)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            if (connected) "● 已连接" else "● 未连接",
+                            style = AppType.bodySm,
+                            color = if (connected) StateGreenDark else MaterialTheme.colorScheme.error,
+                            maxLines = 1,
+                        )
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Filled.Close, contentDescription = "返回")
                     }
                 },
                 actions = {
-                    TinyBadge(
-                        if (connected) "● 已连接" else "● 未连接",
-                        if (connected) Color(0xFFD3F8D3) else MaterialTheme.colorScheme.errorContainer,
-                        if (connected) Color(0xFF0A5C0A) else MaterialTheme.colorScheme.onErrorContainer,
-                    )
-                    TextButton(onClick = { showGuide = true }) { Text("\uD83D\uDCD6 指南") }
-                    TextButton(onClick = { vm.clearTerminal() }) { Text("清屏") }
+                    // 右侧两项等间距：指南 / 清屏（收紧内边距省空间）
+                    TextButton(
+                        onClick = { showGuide = true },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                    ) { Text("\uD83D\uDCD6 指南") }
+                    TextButton(
+                        onClick = { vm.clearTerminal() },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                    ) { Text("\uD83E\uDDF9 清屏") }
                 },
             )
         },
