@@ -2,6 +2,7 @@ package dev.appinspector.ui
 
 import android.app.Application
 import android.content.Context
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
@@ -16,6 +17,7 @@ import androidx.lifecycle.viewModelScope
 import android.content.pm.PackageManager
 import android.os.Build
 import dev.appinspector.data.AppEntry
+import dev.appinspector.data.ApkEntry
 import dev.appinspector.data.AppFilter
 import dev.appinspector.data.SuggestSubFilter
 import dev.appinspector.data.ProtectedApps
@@ -71,7 +73,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     var loading by mutableStateOf(true)
         private set
-    private var allApps: List<AppEntry> = emptyList()
+    internal var allApps: List<AppEntry> by mutableStateOf(emptyList())
 
     var search by mutableStateOf("")
     var searching by mutableStateOf(false)
@@ -808,6 +810,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return disabled to deleted
     }
 
+    /** 扫码分享：生成可分享的包名清单文本（对方扫码后粘贴到清单 Tab 导入） */
+    fun sharePlanText(): String {
+        val (disabled, deleted) = currentSnapshot()
+        return buildString {
+            if (disabled.isNotEmpty()) {
+                appendLine("# 停用（${disabled.size}）")
+                disabled.forEach { appendLine(it) }
+            }
+            if (deleted.isNotEmpty()) {
+                appendLine("# 删除（${deleted.size}）")
+                deleted.forEach { appendLine(it) }
+            }
+        }.trim()
+    }
+
     /** v6.7: 按包名查应用条目（供备份恢复用） */
     fun findEntry(pkg: String): AppEntry? = allApps.find { it.packageName == pkg }
 
@@ -1071,6 +1088,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var showHistory by mutableStateOf(false)
     var showReport by mutableStateOf(false)
     var showBackup by mutableStateOf(false)
+    /** 安装包管理全屏页 */
+    var showApkManager by mutableStateOf(false)
 
     data class TerminalLine(
         val text: String,
@@ -1180,6 +1199,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             pendingExtract?.let { startExtract(it) }
             pendingExtract = null
+            if (consumePendingApkScan()) scanApks()
         }
     }
 
@@ -1188,6 +1208,232 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val r = pickDirRequest
         pickDirRequest = false
         return r
+    }
+
+    // ---------- 安装包（APK）管理 ----------
+
+    var apkList by mutableStateOf<List<ApkEntry>>(emptyList())
+    var apkScanning by mutableStateOf(false)
+
+    companion object {
+        /** APK 扫描文件数上限，防大目录 OOM/ANR */
+        private const val MAX_APK_SCAN = 2000
+    }
+
+    /** 请求扫描：无目录则走现有 SAF 选目录流程，选完自动扫 */
+    fun requestApkScan() {
+        if (settings.value.extractTreeUri.isBlank()) {
+            pendingApkScan = true
+            pickDirRequest = true
+        } else {
+            scanApks()
+        }
+    }
+
+    private var pendingApkScan = false
+
+    /** SAF 目录选完后，若有待处理的 APK 扫描则执行 */
+    private fun consumePendingApkScan(): Boolean {
+        val r = pendingApkScan
+        pendingApkScan = false
+        return r
+    }
+
+    /** 扫描安装包目录 */
+    fun scanApks() {
+        val ctx = getApplication<Application>()
+        val uriStr = settings.value.extractTreeUri
+        if (uriStr.isBlank()) {
+            toastMsg = "请先选择安装包目录"
+            return
+        }
+        if (apkScanning) return
+        apkScanning = true
+        viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    val found = mutableListOf<ApkEntry>()
+                    val root = androidx.documentfile.provider.DocumentFile
+                        .fromTreeUri(ctx, Uri.parse(uriStr))
+                    if (root != null) {
+                        collectApks(root, depth = 0, out = found)
+                    }
+                    val pm = ctx.packageManager
+                    found.map { raw ->
+                        var pkg: String? = null
+                        var vName: String? = null
+                        var vCode = 0L
+                        // SAF uri 没有本地路径：复制到 cache 再解析；finally 保证临时文件删除
+                        val tmp = File(ctx.cacheDir, "apkparse_${System.nanoTime()}.apk")
+                        try {
+                            runCatching {
+                                ctx.contentResolver.openInputStream(raw.fileUri)?.use { ins ->
+                                    FileOutputStream(tmp).use { outs -> ins.copyTo(outs) }
+                                }
+                            }
+                            if (tmp.exists()) {
+                                runCatching {
+                                    val info = if (Build.VERSION.SDK_INT >= 33) {
+                                        pm.getPackageArchiveInfo(
+                                        tmp.absolutePath,
+                                        PackageManager.PackageInfoFlags.of(0),
+                                        )
+                                    } else {
+                                        @Suppress("DEPRECATION")
+                                        pm.getPackageArchiveInfo(tmp.absolutePath, 0)
+                                    }
+                                    pkg = info?.packageName
+                                    vName = info?.versionName
+                                    vCode = if (Build.VERSION.SDK_INT >= 28) {
+                                        info?.longVersionCode ?: 0L
+                                    } else {
+                                        @Suppress("DEPRECATION")
+                                        info?.versionCode?.toLong() ?: 0L
+                                    }
+                                }
+                            }
+                        } finally {
+                            runCatching { tmp.delete() }
+                        }
+                        var installed = false
+                        var outdated = false
+                        if (pkg != null) {
+                            runCatching {
+                                val installedInfo = if (Build.VERSION.SDK_INT >= 33) {
+                                    pm.getPackageInfo(pkg!!, PackageManager.PackageInfoFlags.of(0))
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    pm.getPackageInfo(pkg!!, 0)
+                                }
+                                installed = true
+                                val installedCode = if (Build.VERSION.SDK_INT >= 28) {
+                                    installedInfo.longVersionCode
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    installedInfo.versionCode.toLong()
+                                }
+                                outdated = vCode in 1..<installedCode
+                            }
+                        }
+                        raw.copy(
+                        packageName = pkg,
+                        versionName = vName,
+                        versionCode = vCode,
+                        isInstalled = installed,
+                        isOutdated = outdated,
+                        )
+                    }.sortedByDescending { it.fileSize }
+                }
+                apkList = result
+                toastMsg = "扫描完成：${result.size} 个安装包"
+            } catch (t: Throwable) {
+                toastMsg = "扫描失败：${t.message}"
+            } finally {
+                apkScanning = false
+            }
+        }
+    }
+
+    /**
+     * 递归收集 .apk（限 2 层深度、2000 个文件，防大目录卡死）。
+     * @return true=达到上限被截断
+     */
+    private fun collectApks(
+        dir: androidx.documentfile.provider.DocumentFile,
+        depth: Int,
+        out: MutableList<ApkEntry>,
+    ): Boolean {
+        if (depth > 2) return false
+        if (out.size >= MAX_APK_SCAN) return true
+        val children = runCatching { dir.listFiles() }.getOrNull() ?: return false
+        for (c in children) {
+            if (out.size >= MAX_APK_SCAN) return true
+            if (c.isDirectory) {
+                if (collectApks(c, depth + 1, out)) return true
+            } else if (c.name?.endsWith(".apk", ignoreCase = true) == true) {
+                val uri = c.uri
+                out.add(
+                    ApkEntry(
+                        fileName = c.name ?: uri.toString(),
+                        fileSize = c.length(),
+                        fileUri = uri,
+                        packageName = null,
+                        versionName = null,
+                        versionCode = 0L,
+                        isInstalled = false,
+                        isOutdated = false,
+                    ),
+                )
+            }
+        }
+        return false
+    }
+
+    /** 安装 APK：优先定向系统安装器（防第三方劫持），失败回退隐式 intent */
+    fun installApk(context: Context, entry: ApkEntry) {
+        fun buildIntent(pinned: Boolean) = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(entry.fileUri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (pinned) setPackage("com.android.packageinstaller")
+        }
+        try {
+            context.startActivity(buildIntent(pinned = true))
+        } catch (e: ActivityNotFoundException) {
+            // 部分 ROM 无原生 packageinstaller，回退隐式 intent 让用户选择
+            try {
+                context.startActivity(buildIntent(pinned = false))
+            } catch (t: Throwable) {
+                toastMsg = "无法启动安装：${t.message}"
+            }
+        } catch (t: Throwable) {
+            toastMsg = "无法启动安装：${t.message}"
+        }
+    }
+
+    /** 删除安装包文件 */
+    fun deleteApk(entry: ApkEntry) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = runCatching {
+                androidx.documentfile.provider.DocumentFile
+                    .fromSingleUri(getApplication(), entry.fileUri)?.delete() == true
+            }.getOrDefault(false)
+            withContext(Dispatchers.Main) {
+                if (ok) {
+                    apkList = apkList.filterNot { it.fileUri == entry.fileUri }
+                    toastMsg = "已删除 ${entry.fileName}"
+                } else {
+                    toastMsg = "删除失败"
+                }
+            }
+        }
+    }
+
+    /** 一键删除全部可删项（已安装且非低版本） */
+    fun deleteAllDeletableApks() {
+        val targets = apkList.filter { it.deletable }
+        if (targets.isEmpty()) {
+            toastMsg = "没有可删除的安装包"
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val removedUris = mutableSetOf<Uri>()
+            var ok = 0
+            for (e in targets) {
+                val deleted = runCatching {
+                    androidx.documentfile.provider.DocumentFile
+                        .fromSingleUri(getApplication(), e.fileUri)?.delete() == true
+                }.getOrDefault(false)
+                if (deleted) {
+                    ok++
+                    removedUris.add(e.fileUri)
+                }
+            }
+            withContext(Dispatchers.Main) {
+                apkList = apkList.filterNot { it.fileUri in removedUris }
+                toastMsg = "已删除 $ok/${targets.size} 个安装包"
+            }
+        }
     }
 
     private fun startExtract(entries: List<AppEntry>) {
