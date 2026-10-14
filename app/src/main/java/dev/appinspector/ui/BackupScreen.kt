@@ -5,10 +5,16 @@ import android.content.Intent
 import android.net.Uri
 import android.view.WindowManager
 import android.widget.Toast
+import android.graphics.Bitmap
+import android.graphics.Color as AndroidColor
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
 import dev.appinspector.accessibility.AutoDisableState
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -101,12 +107,15 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -125,7 +134,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import dev.appinspector.data.AppEntry
 import dev.appinspector.data.AppFilter
 import dev.appinspector.data.SuggestSubFilter
@@ -158,6 +170,10 @@ fun BackupScreen(vm: AppViewModel, onBack: () -> Unit) {
     var restoreTarget by remember { mutableStateOf<ConfigBackup?>(null) }
     var deleteTarget by remember { mutableStateOf<ConfigBackup?>(null) }
     val timeFmt = remember { java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()) }
+    // 扫码分享
+    var showShare by remember { mutableStateOf(false) }
+    val pkgCount = disabledNow.size + deletedNow.size
+    val shareText = remember(pkgCount) { vm.sharePlanText() }
 
     // 文件导入
     val importLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -227,6 +243,21 @@ fun BackupScreen(vm: AppViewModel, onBack: () -> Unit) {
                     onClick = { vm.backupManager.createBackup() },
                     modifier = Modifier.fillMaxWidth(),
                 )
+                // 扫码分享：把当前精简方案生成二维码
+                OutlinedButton(
+                    onClick = { showShare = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Text("📤 分享给朋友（扫码）")
+                }
+                if (showShare) {
+                    ShareQrDialog(
+                        text = shareText,
+                        pkgCount = pkgCount,
+                        onDismiss = { showShare = false },
+                    )
+                }
             }
             Spacer(Modifier.height(12.dp))
             // 备份记录
@@ -356,4 +387,106 @@ fun BackupScreen(vm: AppViewModel, onBack: () -> Unit) {
             },
         )
     }
+}
+
+/** 二维码生成状态 */
+private sealed interface QrResult {
+    data object Loading : QrResult
+    data class Ready(val bitmap: Bitmap) : QrResult
+    data object Failed : QrResult
+}
+
+/** 扫码分享弹窗：把精简方案生成二维码，对方扫码后粘贴到清单 Tab 导入 */
+@Composable
+private fun ShareQrDialog(text: String, pkgCount: Int, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    // 后台线程生成，避免主线程逐像素绘制卡顿
+    val qr by produceState<QrResult>(initialValue = QrResult.Loading, text) {
+        value = try {
+            QrResult.Ready(withContext(Dispatchers.Default) { generateQrBitmap(text, 640) })
+        } catch (t: Throwable) {
+            if (t is CancellationException) throw t
+            QrResult.Failed
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = DIALOG_SHAPE,
+        title = { Text("分享给朋友") },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                if (pkgCount > 150) {
+                    Text(
+                        "清单过长（$pkgCount 个包），二维码可能扫不出，建议用复制文本",
+                        style = AppType.bodySm,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                when (val q = qr) {
+                    is QrResult.Ready -> {
+                        Image(
+                            bitmap = q.bitmap.asImageBitmap(),
+                            contentDescription = "精简方案二维码",
+                            modifier = Modifier
+                                .size(240.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White)
+                                .padding(8.dp),
+                        )
+                    }
+                    QrResult.Loading -> {
+                        Box(
+                            modifier = Modifier.size(240.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                    QrResult.Failed -> {
+                        Text("二维码生成失败，包名过多", style = AppType.bodyMd)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "对方用任意扫码工具扫描，得到包名清单后粘贴到「清单」Tab 导入即可",
+                    style = AppType.bodySm,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("精简方案", text))
+                android.widget.Toast.makeText(context, "清单已复制", android.widget.Toast.LENGTH_SHORT).show()
+            }) { Text("复制文本") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        },
+    )
+}
+
+/** ZXing 生成二维码 Bitmap */
+private fun generateQrBitmap(content: String, size: Int): Bitmap {
+    val writer = QRCodeWriter()
+    val hints = mapOf(
+        EncodeHintType.CHARACTER_SET to "UTF-8",
+        EncodeHintType.MARGIN to 1,
+    )
+    val matrix = writer.encode(content, BarcodeFormat.QR_CODE, size, size, hints)
+    val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.RGB_565)
+    // 批量 setPixels，比逐像素 setPixel 快一个数量级
+    val pixels = IntArray(size * size)
+    val black = AndroidColor.BLACK
+    val white = AndroidColor.WHITE
+    var i = 0
+    for (y in 0 until size) {
+        for (x in 0 until size) {
+            pixels[i++] = if (matrix[x, y]) black else white
+        }
+    }
+    bmp.setPixels(pixels, 0, size, 0, 0, size, size)
+    return bmp
 }
