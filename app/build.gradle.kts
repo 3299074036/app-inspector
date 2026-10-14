@@ -12,8 +12,8 @@ android {
         applicationId = "dev.appinspector"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.0.6"
+        versionCode = 7
+        versionName = "0.0.7"
     }
 
     buildTypes {
@@ -79,6 +79,9 @@ dependencies {
     // Shizuku：免 Root 执行 pm 级操作（disable-user / uninstall --user 0）
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
+
+    // 二维码生成：扫码分享精简方案
+    implementation("com.google.zxing:core:3.5.3")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

@@ -13,13 +13,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
-// ---------- 品牌色：深邃蓝 ----------
-private val BrandBlue = Color(0xFF1B6EF3)
-private val BrandBlueDark = Color(0xFF7AA5FF)
-private val BrandContainer = Color(0xFFDBE7FF)
-private val BrandContainerDark = Color(0xFF06275F)
-private val OnBrandContainer = Color(0xFF06275F)
-private val OnBrandContainerDark = Color(0xFFDBE7FF)
+// ---------- 品牌色：晴空蓝（冷调清新） ----------
+private val BrandBlue = Color(0xFF1A73E8)
+private val BrandBlueDark = Color(0xFF8AB4FF)
+private val BrandContainer = Color(0xFFD9E9FF)
+private val BrandContainerDark = Color(0xFF0A2A5E)
+private val OnBrandContainer = Color(0xFF0A2A5E)
+private val OnBrandContainerDark = Color(0xFFD9E9FF)
 
 private val LightColors = lightColorScheme(
     primary = BrandBlue,
@@ -27,23 +27,23 @@ private val LightColors = lightColorScheme(
     primaryContainer = BrandContainer,
     onPrimaryContainer = OnBrandContainer,
     secondaryContainer = Color(0xFFE8DEF8), // 社区徽标紫
-    background = Color(0xFFF0F3F1), // 页面底：中性灰（Scaffold 默认取 background，必须显式指定）
-    surface = Color(0xFFF0F3F1), // 与 background 保持一致
+    background = Color(0xFFF4F6FA), // 页面底：冷调浅蓝灰（去灰绿调）
+    surface = Color(0xFFF4F6FA), // 与 background 保持一致
     surfaceContainerLow = Color.White, // 卡片底色：纯白
-    surfaceContainer = Color(0xFFF0F1F4),
-    surfaceContainerHigh = Color(0xFFE8EAEE),
+    surfaceContainer = Color(0xFFECEFF4),
+    surfaceContainerHigh = Color(0xFFE2E7EE),
 )
 
 private val DarkColors = darkColorScheme(
     primary = BrandBlueDark,
-    onPrimary = Color(0xFF06275F),
+    onPrimary = Color(0xFF0A2A5E),
     primaryContainer = BrandContainerDark,
     onPrimaryContainer = OnBrandContainerDark,
-    background = Color(0xFF111318),
-    surface = Color(0xFF111318),
-    surfaceContainerLow = Color(0xFF1A1D24),
-    surfaceContainer = Color(0xFF1D2026),
-    surfaceContainerHigh = Color(0xFF23262E),
+    background = Color(0xFF0F1216),
+    surface = Color(0xFF0F1216),
+    surfaceContainerLow = Color(0xFF171B21),
+    surfaceContainer = Color(0xFF1A1F26),
+    surfaceContainerHigh = Color(0xFF20262E),
 )
 
 // ---------- 大圆角 Shape 体系 ----------
@@ -63,8 +63,8 @@ enum class TileKind { BLUE, GREEN, ORANGE, PURPLE }
 fun tileColors(kind: TileKind): Pair<Color, Color> {
     val dark = isSystemInDarkTheme()
     return when (kind) {
-        TileKind.BLUE -> (if (dark) Color(0xFF1E3A5F) else Color(0xFFE8F1FE)) to
-            (if (dark) Color(0xFF8FB6F5) else Color(0xFF1B6EF3))
+        TileKind.BLUE -> (if (dark) Color(0xFF1E3A5F) else Color(0xFFE3EEFE)) to
+            (if (dark) Color(0xFF8AB4FF) else Color(0xFF1A73E8))
         TileKind.GREEN -> (if (dark) Color(0xFF1B4332) else Color(0xFFE7F6EC)) to
             (if (dark) Color(0xFF6FCF97) else Color(0xFF16A34A))
         TileKind.ORANGE -> (if (dark) Color(0xFF4A2F14) else Color(0xFFFEF3E2)) to
@@ -76,7 +76,7 @@ fun tileColors(kind: TileKind): Pair<Color, Color> {
 
 // ---------- v5 主按钮渐变 ----------
 fun brandGradient(): Brush =
-    Brush.horizontalGradient(listOf(Color(0xFF3B82F6), Color(0xFF1B6EF3)))
+    Brush.horizontalGradient(listOf(Color(0xFF4A90F5), Color(0xFF1A73E8)))
 
 // ---------- 状态色（Token v1）：状态徽章编码 ----------
 @Immutable
