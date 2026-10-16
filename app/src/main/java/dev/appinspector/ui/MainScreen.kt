@@ -1,6 +1,7 @@
 package dev.appinspector.ui
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.view.WindowManager
@@ -244,6 +245,7 @@ fun MainScreen(
         // 安装包管理全屏页
         ApkManagerScreen(vm = vm, onBack = { vm.showApkManager = false })
     } else {
+        val context = LocalContext.current
         Scaffold(
             topBar = {
                 if (vm.selectMode) {
@@ -255,7 +257,17 @@ fun MainScreen(
                             }
                         },
                         actions = {
-                            TextButton(onClick = { vm.selectAll(vm.currentList()) }) {
+                            // 全选与列表显示用同一份子筛选后列表（建议精简页切到"可删除"时只选 44 个）
+                            TextButton(onClick = {
+                                val base = vm.currentList()
+                                vm.selectAll(
+                                    if (vm.filter == AppFilter.SUGGEST) {
+                                        applySuggestSubFilter(context, base, vm.suggestSubFilter)
+                                    } else {
+                                        base
+                                    },
+                                )
+                            }) {
                                 Text("全选")
                             }
                         },
@@ -322,7 +334,9 @@ fun MainScreen(
                             shadowElevation = 8.dp,
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                modifier = Modifier
+                                    .horizontalScroll(rememberScrollState())
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 val shizukuReady =
@@ -686,10 +700,8 @@ private fun AppListHeader(
     pagerState: androidx.compose.foundation.pager.PagerState,
     scope: kotlinx.coroutines.CoroutineScope,
 ) {
-    val settings by vm.settings.collectAsState()
     Column(Modifier.fillMaxWidth()) {
     // 搜索框（填充式无边框）+ 排序按钮
-    val isDefaultSort = settings.sortKey == SortKey.NAME && settings.sortAsc
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -736,16 +748,6 @@ private fun AppListHeader(
             Icon(Icons.Filled.Sort, contentDescription = "排序", modifier = Modifier.size(20.dp))
         }
     }
-    // 当前排序小字（SortKey.title 自带"按"字）
-    if (!isDefaultSort) {
-        Text(
-            "${settings.sortKey.title} · ${if (settings.sortAsc) "升序" else "降序"}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 24.dp),
-        )
-    }
-
     // 4 个文字 Tab（均匀分布，带个数）
     FilterTabRow(
         options = AppFilter.entries.map { it.title },
@@ -862,22 +864,13 @@ private fun AppListPage(vm: AppViewModel, filter: AppFilter) {
     // 订阅 settings，排序/显示系统应用变化时自动重组刷新
     val settings by vm.settings.collectAsState()
     val baseList = remember(settings, filter, vm.search) { vm.listFor(filter) }
-    // 建议精简页叠加子筛选（按 UAD 建议等级）
+    // 建议精简页叠加子筛选（按 UAD 建议等级）：与全选共用 applySuggestSubFilter
     val sub = vm.suggestSubFilter
     val list = remember(baseList, sub, filter) {
-        if (filter != AppFilter.SUGGEST || sub == SuggestSubFilter.ALL) {
+        if (filter != AppFilter.SUGGEST) {
             baseList
         } else {
-            baseList.filter { entry ->
-                val removal = UadDb.query(context, entry.packageName)?.removal
-                when (sub) {
-                    SuggestSubFilter.DELETABLE -> removal == "Recommended"
-                    SuggestSubFilter.CAREFUL -> removal == "Advanced"
-                    SuggestSubFilter.NOT_RECOMMENDED -> removal == "Expert"
-                    SuggestSubFilter.DO_NOT -> removal == "Unsafe"
-                    SuggestSubFilter.ALL -> true
-                }
-            }
+            applySuggestSubFilter(context, baseList, sub)
         }
     }
     if (list.isEmpty()) {
@@ -1054,6 +1047,25 @@ private fun FilterTabRow(
                         ),
                 )
             }
+        }
+    }
+}
+
+/** 建议精简子筛选：列表显示与全选共用，保证全选选中的就是当前看到的 */
+private fun applySuggestSubFilter(
+    context: Context,
+    baseList: List<dev.appinspector.data.AppEntry>,
+    sub: SuggestSubFilter,
+): List<dev.appinspector.data.AppEntry> {
+    if (sub == SuggestSubFilter.ALL) return baseList
+    return baseList.filter { entry ->
+        val removal = UadDb.query(context, entry.packageName)?.removal
+        when (sub) {
+            SuggestSubFilter.DELETABLE -> removal == "Recommended"
+            SuggestSubFilter.CAREFUL -> removal == "Advanced"
+            SuggestSubFilter.NOT_RECOMMENDED -> removal == "Expert"
+            SuggestSubFilter.DO_NOT -> removal == "Unsafe"
+            SuggestSubFilter.ALL -> true
         }
     }
 }
